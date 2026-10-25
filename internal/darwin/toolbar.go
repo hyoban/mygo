@@ -129,12 +129,21 @@ func (t *toolbar) makeItem(it platform.ToolbarItem, insert bool) id {
 		item = send(class("NSTrackingSeparatorToolbarItem"), "trackingSeparatorToolbarItemWithIdentifier:splitView:dividerIndex:",
 			uintptr(ident), uintptr(t.split), uintptr(it.Divider))
 	case platform.ToolbarSegmented:
-		var titles []id
-		for _, s := range it.Segments {
+		var titles, images []id
+		for i, s := range it.Segments {
 			titles = append(titles, nsString(s))
+			if len(it.SegmentSymbols) == len(it.Segments) {
+				images = append(images, symbol(it.SegmentSymbols[i], s))
+			}
 		}
-		item = send(class("NSToolbarItemGroup"), "groupWithItemIdentifier:titles:selectionMode:labels:target:action:",
-			uintptr(ident), uintptr(nsArray(titles...)), 0, uintptr(nsArray(titles...)), uintptr(t.delegate), action)
+		if images != nil {
+			item = send(class("NSToolbarItemGroup"), "groupWithItemIdentifier:images:selectionMode:labels:target:action:",
+				uintptr(ident), uintptr(nsArray(images...)), 0, uintptr(nsArray(titles...)), uintptr(t.delegate), action)
+		} else {
+			item = send(class("NSToolbarItemGroup"), "groupWithItemIdentifier:titles:selectionMode:labels:target:action:",
+				uintptr(ident), uintptr(nsArray(titles...)), 0, uintptr(nsArray(titles...)), uintptr(t.delegate), action)
+		}
+		send(item, "setSelectedIndex:", uintptr(it.Selected))
 	default:
 		item = autorelease(send(alloc("NSToolbarItem"), "initWithItemIdentifier:", uintptr(ident)))
 		switch {

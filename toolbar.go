@@ -75,9 +75,13 @@ type ToolbarItem struct {
 	// Disabled grays the item out; Hidden leaves it out, where it would
 	// show, for as long.
 	Disabled, Hidden bool
-	// Segments and Selected are a segmented control's.
-	Segments []string
-	Selected int
+	// Segments and Selected are a segmented control's: the segments'
+	// names, and the one chosen, -1 for none. SegmentSymbols, as many,
+	// show the system's symbols in place of the names, as Xcode's
+	// navigators: the names then label them.
+	Segments       []string
+	SegmentSymbols []string
+	Selected       int
 	// Divider is a separator's: the column it follows the end of.
 	Divider int
 	// Click runs as the user clicks a button, Select as they choose a
@@ -110,7 +114,7 @@ func (w *Window) SetToolbar(t *Toolbar) bool {
 			items[it.ID] = it
 			p.Items = append(p.Items, platform.ToolbarItem{
 				ID: it.ID, Kind: platform.ToolbarItemKind(it.Kind), Title: it.Title, Symbol: it.Symbol, Label: it.Label,
-				ToolTip: it.ToolTip, Disabled: it.Disabled, Hidden: it.Hidden, Segments: it.Segments, Selected: it.Selected, Divider: it.Divider,
+				ToolTip: it.ToolTip, Disabled: it.Disabled, Hidden: it.Hidden, Segments: it.Segments, SegmentSymbols: it.SegmentSymbols, Selected: it.Selected, Divider: it.Divider,
 			})
 		}
 		for _, c := range t.Columns {

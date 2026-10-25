@@ -57,9 +57,11 @@ type ToolbarItem struct {
 	Title, Symbol, Label string
 	ToolTip              string
 	Disabled, Hidden     bool
-	// Segments and Selected are a segmented control's.
-	Segments []string
-	Selected int
+	// Segments and Selected are a segmented control's, SegmentSymbols the
+	// symbols it shows in place of the names, where it has as many.
+	Segments       []string
+	SegmentSymbols []string
+	Selected       int
 	// Divider is a separator's.
 	Divider int
 }
