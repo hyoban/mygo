@@ -237,6 +237,10 @@ type Window struct {
 	flyoutSize platform.Size
 	// panel is WindowOptions.Panel.
 	panel bool
+	// toolbarItems are the items of the toolbar SetToolbar showed last,
+	// by ID, whose handlers run as the user activates them. Main thread
+	// only.
+	toolbarItems map[string]ToolbarItem
 	// host is the window a web view is in, for the page of a web view
 	// (webView); webViews are the pages of a window's web views, guarded
 	// by the lock of windows.

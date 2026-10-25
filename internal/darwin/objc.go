@@ -35,6 +35,8 @@ var (
 	msgSetRectBool   func(obj id, sel objc.SEL, r NSRect, b bool)
 	msgRectForRect   func(obj id, sel objc.SEL, r NSRect, style uint) NSRect
 	msgRectToRect    func(obj id, sel objc.SEL, r NSRect) NSRect
+	msgRectToView    func(obj id, sel objc.SEL, r NSRect, view id) NSRect
+	msgSetPosition   func(obj id, sel objc.SEL, pos float64, i int)
 	msgFloat         func(obj id, sel objc.SEL) float64
 	msgSetFloat      func(obj id, sel objc.SEL, v float64)
 	msgSize          func(obj id, sel objc.SEL) NSSize
@@ -129,6 +131,8 @@ func load() {
 		purego.RegisterFunc(&msgRect, stret)
 		purego.RegisterFunc(&msgRectForRect, stret)
 		purego.RegisterFunc(&msgRectToRect, stret)
+		purego.RegisterFunc(&msgRectToView, stret)
+		purego.RegisterFunc(&msgSetPosition, msgSendAddr)
 		purego.RegisterFunc(&msgSetRect, msgSendAddr)
 		purego.RegisterFunc(&msgDrawImage, msgSendAddr)
 		purego.RegisterFunc(&msgInitBitmap, msgSendAddr)

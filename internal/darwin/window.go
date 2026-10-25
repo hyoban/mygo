@@ -92,6 +92,8 @@ type window struct {
 	closed        bool
 	sheet         bool
 	trafficLights *platform.Point
+	// toolbar is the toolbar of the system's SetToolbar shows, or nil.
+	toolbar *toolbar
 	// surface shows the content MyGo draws, in place of the web view.
 	surface *surface
 	// webViews are the web views under the surface (webview.go), and host
@@ -514,6 +516,7 @@ func (w *window) cleanup() {
 			send(w.parent.win, "removeChildWindow:", uintptr(w.win))
 		}
 	}
+	w.removeToolbar()
 	delete(b.byDelegate, w.delegate)
 	delete(b.byWebView, w.web)
 	delete(b.byNSWindow, w.win)

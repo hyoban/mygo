@@ -475,6 +475,9 @@ type Window struct {
 	Opts *platform.WindowOptions
 	// Flyout is how a flyout was placed last.
 	Flyout platform.Flyout
+	// toolbar is SetToolbar's, and toolbarActivated its function.
+	toolbar          *platform.Toolbar
+	toolbarActivated func(id string, segment int)
 
 	mu        sync.Mutex
 	active    bool // SetActiveAppearance
@@ -1451,4 +1454,46 @@ func (b *Backend) SetSecretError(err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.secretError = err
+}
+
+// SetToolbar notes the toolbar shown, which Toolbar returns, and the
+// function Activate calls.
+func (w *Window) SetToolbar(t *platform.Toolbar, activated func(id string, segment int)) {
+	w.mu.Lock()
+	w.toolbar, w.toolbarActivated = t, activated
+	w.mu.Unlock()
+}
+
+// Toolbar returns the toolbar SetToolbar showed last, nil for none.
+func (w *Window) Toolbar() *platform.Toolbar {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.toolbar
+}
+
+// ActivateToolbarItem activates the toolbar's item id, as the user
+// clicking it, or choosing segment of it, does. Main thread only.
+func (w *Window) ActivateToolbarItem(id string, segment int) {
+	w.mu.Lock()
+	fn := w.toolbarActivated
+	w.mu.Unlock()
+	if fn != nil {
+		fn(id, segment)
+	}
+}
+
+// ToolbarItemBounds places the items of the toolbar side by side, 40 DIPs
+// wide, at the top of the content, those hidden nowhere.
+func (w *Window) ToolbarItemBounds(id string) (platform.Rect, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.toolbar == nil {
+		return platform.Rect{}, false
+	}
+	for i, it := range w.toolbar.Items {
+		if it.ID == id && !it.Hidden {
+			return platform.Rect{X: 40 * i, Width: 40, Height: 28}, true
+		}
+	}
+	return platform.Rect{}, false
 }
