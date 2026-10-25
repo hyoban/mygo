@@ -1086,8 +1086,15 @@ func (w *window) hiddenTitleBar() bool {
 // TitleBar returns the room the traffic lights take, from the left edge to
 // the right edge of the zoom button, in the title bar, which is as tall as
 // the window's own or, with TrafficLightPosition, leaves as much room below
-// them as above. They hide in full screen, and with HideWindowButtons.
+// them as above. They hide in full screen, and with HideWindowButtons. In
+// full screen SetToolbar's toolbar stays over the top of the content,
+// without them: its height.
 func (w *window) TitleBar() platform.TitleBar {
+	if w.hiddenTitleBar() && !w.closed && w.IsFullScreen() && w.toolbar != nil {
+		frame := msgRect(w.win, sel("frame"))
+		content := msgRect(w.win, sel("contentLayoutRect"))
+		return platform.TitleBar{Height: int(math.Round(frame.Size.Height - content.Origin.Y - content.Size.Height))}
+	}
 	if !w.hiddenTitleBar() || w.closed || w.IsFullScreen() || w.opts.HideWindowButtons {
 		return platform.TitleBar{}
 	}
@@ -1692,9 +1699,12 @@ func registerWindowClasses() {
 			}),
 			// The toolbar that insets the traffic lights holds no items: in
 			// full screen it hides with the menu bar instead of covering the
-			// top of the page.
+			// top of the page. SetToolbar's stays, as Xcode's and Finder's.
 			method("window:willUseFullScreenPresentationOptions:", func(self id, _ objc.SEL, win id, proposed uint) uint {
 				const autoHide = presentationFullScreen | presentationAutoHideMenuBar
+				if w := b().windowFor(self); w != nil && w.toolbar != nil {
+					return proposed
+				}
 				if send(win, "toolbar") != 0 && proposed&autoHide == autoHide {
 					return proposed | presentationAutoHideToolbar
 				}
@@ -1702,6 +1712,7 @@ func registerWindowClasses() {
 			}),
 			method("windowDidEnterFullScreen:", func(self id, _ objc.SEL, n id) {
 				if w := b().windowFor(self); w != nil {
+					w.placeFullScreenSidebars()
 					w.h.EnteredFullScreen()
 					if w.hiddenTitleBar() {
 						w.h.TitleBarChanged() // the traffic lights hid
@@ -1711,6 +1722,7 @@ func registerWindowClasses() {
 			method("windowDidExitFullScreen:", func(self id, _ objc.SEL, n id) {
 				if w := b().windowFor(self); w != nil {
 					w.layoutTrafficLights()
+					w.placeFullScreenSidebars()
 					w.h.LeftFullScreen()
 					if w.hiddenTitleBar() {
 						w.h.TitleBarChanged()

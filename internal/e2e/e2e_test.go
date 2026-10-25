@@ -888,6 +888,14 @@ func TestFullScreenToolbar(t *testing.T) {
 	if !hides {
 		t.Error("the toolbar of an inset title bar stays in full screen")
 	}
+	// SetToolbar's holds the window's controls: it stays, as Xcode's.
+	w = newWindow(t, mygo.WindowOptions{Width: 300, Height: 200, TitleBarStyle: mygo.TitleBarHidden})
+	if !w.SetToolbar(&mygo.Toolbar{Items: []mygo.ToolbarItem{{ID: "go", Title: "Go"}}}) {
+		t.Fatal("no toolbar")
+	}
+	if hides, _ = fullScreenHidesToolbar(w); hides {
+		t.Error("SetToolbar's toolbar hides in full screen")
+	}
 }
 
 // AppKit lays the title bar out again when the title or the appearance,

@@ -30,6 +30,9 @@ type toolbar struct {
 	// sidebars are the backgrounds behind the columns that have one
 	// (ToolbarColumn.Sidebar), by column.
 	sidebars map[int]id
+	// fullScreenSidebars are their backgrounds behind the toolbar in full
+	// screen (placeFullScreenSidebars), by column.
+	fullScreenSidebars map[int]id
 	// backdrop is the window's background under the sidebars' glass.
 	backdrop  id
 	items     map[string]id
@@ -272,7 +275,7 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 		toolbarClassOnce.Do(registerToolbarClass)
 		t := w.toolbar
 		if t == nil {
-			t = &toolbar{items: map[string]id{}, buttons: map[string]id{}, sidebars: map[int]id{}}
+			t = &toolbar{items: map[string]id{}, buttons: map[string]id{}, sidebars: map[int]id{}, fullScreenSidebars: map[int]id{}}
 			w.toolbar = t
 			t.delegate = send(alloc("MyGoToolbarDelegate"), "init")
 			toolbarOwners[t.delegate] = w
@@ -284,6 +287,7 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 		spec = hideCollapsed(spec)
 		was := t.spec
 		t.spec = spec
+		w.placeFullScreenSidebars()
 		if t.tb == 0 {
 			name := spec.AutosaveName
 			if name == "" {
@@ -437,32 +441,13 @@ func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 	bounds := msgRect(w.view, sel("bounds"))
 	frame := NSRect{Origin: NSPoint{X: x}, Size: NSSize{Width: c.Width, Height: bounds.Size.Height}}
 	if v == 0 {
-		// Liquid Glass, as AppKit's split views put their sidebars on
-		// macOS 26, over the window's background (backdrop); the sidebar
-		// material before. The glass rounds all of its corners alike,
-		// whichever corners its layer masks, so it is square in a view
-		// that rounds the window's corners alone (v).
-		var glass id
-		inner := NSRect{Size: frame.Size}
-		if hasClass("NSGlassEffectView") {
-			glass = msgInitRect(alloc("NSGlassEffectView"), sel("initWithFrame:"), inner)
-			send(glass, "setStyle:", 0) // NSGlassEffectViewStyleRegular
-			// The variant of glass AppKit gives a split view's sidebar,
-			// darker than the regular one, which has no public name.
-			if respondsTo(glass, "set_variant:") {
-				send(glass, "set_variant:", 17)
-			}
-			if respondsTo(glass, "set_adaptiveAppearance:") {
-				send(glass, "set_adaptiveAppearance:", 1)
-			}
-			msgSetFloat(glass, sel("setCornerRadius:"), 0)
+		// The glass rounds all of its corners alike, whichever corners its
+		// layer masks, so it is square in a view that rounds the window's
+		// corners alone (v).
+		glass, glassy := sidebarGlass(NSRect{Size: frame.Size})
+		if glassy {
 			w.placeBackdrop()
-		} else {
-			glass = msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), inner)
-			send(glass, "setMaterial:", vibrancyMaterials["sidebar"])
-			send(glass, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
 		}
-		send(glass, "setAutoresizingMask:", nsViewWidthHeightSizable)
 		v = msgInitRect(alloc("NSView"), sel("initWithFrame:"), frame)
 		send(v, "addSubview:", uintptr(autorelease(glass)))
 		send(v, "setWantsLayer:", 1)
@@ -494,6 +479,91 @@ func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 	send(layer, "setMaskedCorners:", corners)
 	send(layer, "setCornerCurve:", uintptr(nsString("continuous")))
 	send(layer, "setMasksToBounds:", boolArg(radius > 0))
+}
+
+// sidebarGlass returns a sidebar's background in frame: Liquid Glass, as
+// AppKit's split views put their sidebars on macOS 26, over the window's
+// background (placeBackdrop), which glassy tells; the sidebar material
+// before.
+func sidebarGlass(frame NSRect) (glass id, glassy bool) {
+	if hasClass("NSGlassEffectView") {
+		glass = msgInitRect(alloc("NSGlassEffectView"), sel("initWithFrame:"), frame)
+		send(glass, "setStyle:", 0) // NSGlassEffectViewStyleRegular
+		// The variant of glass AppKit gives a split view's sidebar,
+		// darker than the regular one, which has no public name.
+		if respondsTo(glass, "set_variant:") {
+			send(glass, "set_variant:", 17)
+		}
+		if respondsTo(glass, "set_adaptiveAppearance:") {
+			send(glass, "set_adaptiveAppearance:", 1)
+		}
+		msgSetFloat(glass, sel("setCornerRadius:"), 0)
+		glassy = true
+	} else {
+		glass = msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), frame)
+		send(glass, "setMaterial:", vibrancyMaterials["sidebar"])
+		send(glass, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
+	}
+	send(glass, "setAutoresizingMask:", nsViewWidthHeightSizable)
+	return glass, glassy
+}
+
+// placeFullScreenSidebars puts the sidebars' backgrounds behind the
+// toolbar in full screen, as AppKit's split views put them, the sidebars
+// going on through the toolbar as they do in the window: AppKit moves the
+// toolbar into a window of its own, over the content, whose backgrounds
+// are opaque. Out of full screen, they hide, as the toolbar is the
+// window's again.
+func (w *window) placeFullScreenSidebars() {
+	t := w.toolbar
+	if t == nil || t.spec == nil {
+		return
+	}
+	var container, titlebar id
+	if w.IsFullScreen() {
+		if b := send(w.win, "standardWindowButton:", 0); b != 0 {
+			titlebar = send(b, "superview")
+			container = send(titlebar, "superview")
+		}
+	}
+	at := 0.0
+	for i, c := range t.spec.Columns {
+		v := t.fullScreenSidebars[i]
+		shows := container != 0 && c.Sidebar && !c.Collapsed
+		if !shows {
+			if v != 0 {
+				send(v, "setHidden:", 1)
+			}
+		} else {
+			height := msgRect(container, sel("bounds")).Size.Height
+			frame := NSRect{Origin: NSPoint{X: at}, Size: NSSize{Width: c.Width, Height: height}}
+			if v == 0 {
+				// Over the window's background, as the sidebars of the
+				// content are (placeBackdrop).
+				v = msgInitRect(alloc("NSView"), sel("initWithFrame:"), frame)
+				send(v, "setAutoresizingMask:", 16) // height sizable
+				glass, glassy := sidebarGlass(NSRect{Size: frame.Size})
+				if glassy {
+					backdrop := msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), NSRect{Size: frame.Size})
+					send(backdrop, "setMaterial:", vibrancyMaterials["content"])
+					send(backdrop, "setBlendingMode:", 1) // NSVisualEffectBlendingModeWithinWindow
+					send(backdrop, "setState:", 1)        // NSVisualEffectStateActive
+					send(backdrop, "setAutoresizingMask:", nsViewWidthHeightSizable)
+					send(v, "addSubview:", uintptr(autorelease(backdrop)))
+				}
+				send(v, "addSubview:", uintptr(autorelease(glass)))
+				t.fullScreenSidebars[i] = v
+			}
+			if send(v, "superview") != container {
+				send(container, "addSubview:positioned:relativeTo:", uintptr(v), nsWindowBelow, uintptr(titlebar))
+			}
+			send(v, "setHidden:", 0)
+			msgSetRect(v, sel("setFrame:"), frame)
+		}
+		if !c.Collapsed {
+			at += c.Width
+		}
+	}
 }
 
 // placeBackdrop puts behind all of the window the background AppKit gives
@@ -532,6 +602,10 @@ func (w *window) removeToolbar() {
 		release(t.split)
 	}
 	for _, v := range t.sidebars {
+		send(v, "removeFromSuperview")
+		release(v)
+	}
+	for _, v := range t.fullScreenSidebars {
 		send(v, "removeFromSuperview")
 		release(v)
 	}
