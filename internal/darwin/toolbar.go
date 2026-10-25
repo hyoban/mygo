@@ -366,11 +366,12 @@ func (w *window) placeColumns(columns []platform.ToolbarColumn) {
 	// those of the content none: the backgrounds go where the content's
 	// columns are.
 	x, at := 0.0, 0.0
+	room := toolbarRoom(columns)
 	for i, c := range columns {
 		send(views[i], "setHidden:", boolArg(c.Collapsed))
 		w.placeSidebar(i, c, at)
 		if !c.Collapsed {
-			x += c.Width
+			x += room[i]
 			at += c.Width
 		}
 		if i < len(columns)-1 {
@@ -380,6 +381,36 @@ func (w *window) placeColumns(columns []platform.ToolbarColumn) {
 			}
 		}
 	}
+}
+
+// minToolbarColumn is the least room the split view behind the content
+// gives a column that shows. AppKit lays out the toolbar of a column a few
+// points wide as that of one it collapsed, its items jumping, and keeps
+// the room of a column's items anyway: a column narrowing, as it slides
+// away, leaves its items where they have the room, as Xcode's do, while
+// its sidebar goes on.
+const minToolbarColumn = 40
+
+// toolbarRoom returns the widths of the columns in the split view behind
+// the content: theirs, at least minToolbarColumn where they show, the
+// widest giving the room the others take more.
+func toolbarRoom(columns []platform.ToolbarColumn) []float64 {
+	room := make([]float64, len(columns))
+	widest, more := -1, 0.0
+	for i, c := range columns {
+		if c.Collapsed {
+			continue
+		}
+		room[i] = max(c.Width, minToolbarColumn)
+		more += room[i] - c.Width
+		if widest < 0 || c.Width > columns[widest].Width {
+			widest = i
+		}
+	}
+	if widest >= 0 {
+		room[widest] = max(room[widest]-more, minToolbarColumn)
+	}
+	return room
 }
 
 // placeSidebar puts the sidebar's background behind column i, from x,
