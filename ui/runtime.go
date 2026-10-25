@@ -368,6 +368,8 @@ type engine struct {
 	// prefs are the desktop's preferences, read once until they change.
 	prefs      Preferences
 	prefsKnown bool
+	// barsAlways is the desktop's ScrollBarsAlways, read with prefs.
+	barsAlways bool
 	// lang is the language the app shows, read as each frame starts.
 	lang string
 	// fmtRegion and fmtLocale are the formats the controls write dates
@@ -393,6 +395,16 @@ type engine struct {
 	// wheeling are the elements of the scroll containers that the notches
 	// of a mouse wheel scroll smoothly (glideWheels).
 	wheeling []uint64
+	// stretching are the elements of the scroll containers a touchpad
+	// stretched past their ends (rubber.go).
+	stretching []uint64
+	// appKitScrolling makes scroll containers scroll as AppKit's scroll
+	// views do, in the windows of macOS: a touchpad pulls them past the
+	// ends of their content, which spring back as the fingers let go
+	// (rubber.go), and their bars show as overlay scrollers, a moment
+	// after the content scrolled and while the pointer is on a track,
+	// rather than while it is over the container (overlayBars).
+	appKitScrolling bool
 	// lastPress is the element of the press (id) and of the one before
 	// (prev), and how many of the backend's count of clicks were before
 	// the first on it.
@@ -512,6 +524,7 @@ func (rt *engine) runFrame() {
 	rt.animating, rt.repainting, rt.repaintAt = false, false, time.Time{}
 	rt.routeKeys()
 	rt.glideWheels(now)
+	rt.springStretches(now)
 	if rt.drag != nil {
 		// The source's element is this frame's, if it builds one.
 		rt.drag.elem = nil

@@ -148,8 +148,10 @@ func place(e *node, x, y float32) {
 			// app from its ScrollState: build the next frame with the new.
 			e.c.rt.animating = true
 		}
-		cx -= float32(e.scrollLeft())
-		cy -= float32(s.scrollY - e.scrollBase)
+		// Past the ends, as far as a touchpad stretched it.
+		sx, sy := s.stretched()
+		cx -= float32(e.scrollLeft() + sx)
+		cy -= float32(s.scrollY + sy - e.scrollBase)
 	}
 	for ch := e.first; ch != nil; ch = ch.next {
 		// A copy of an element leaving the flow stays where the flow was.
@@ -1327,8 +1329,9 @@ func laidOutOrigin(e *node) (x, y float32) {
 				x -= float32(f.followShift())
 			}
 			if p.scrolls() {
-				x -= float32(p.scrollLeft())
-				y -= float32(p.st.scrollY - p.scrollBase)
+				sx, sy := p.st.stretched()
+				x -= float32(p.scrollLeft() + sx)
+				y -= float32(p.st.scrollY + sy - p.scrollBase)
 			}
 		}
 		x += p.x

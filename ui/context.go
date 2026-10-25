@@ -568,8 +568,16 @@ type state struct {
 	barInset [4]float32
 	// barsShown reports whether the last frame painted the element's
 	// scroll bars: they show only while it is hovered or a bar is
-	// dragged.
+	// dragged, or, as AppKit's overlay scrollers on macOS, a moment after
+	// it scrolled and while the pointer is on a bar's track.
 	barsShown bool
+	// barX and barY are the offset the bars were last painted at, and
+	// scrolledAt when it last moved (overlayBars).
+	barX, barY float64
+	scrolledAt time.Time
+	// stretch is how far a touchpad pulled the content past its ends, as
+	// AppKit's scroll views pull (rubber.go).
+	stretch *stretch
 	// track is the ScrollState of the last frame's element, which events
 	// that scroll it update (scrollTo).
 	track *ScrollState

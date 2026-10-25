@@ -203,6 +203,7 @@ func (t theme) Preferences() platform.Preferences {
 		p.ReduceMotion = sendBool(ws, "accessibilityDisplayShouldReduceMotion")
 		p.ReduceTransparency = sendBool(ws, "accessibilityDisplayShouldReduceTransparency")
 		p.HighContrast = sendBool(ws, "accessibilityDisplayShouldIncreaseContrast")
+		p.ScrollBarsAlways = sendInt(class("NSScroller"), "preferredScrollerStyle") == 0 // NSScrollerStyleLegacy
 		// The accent, as the app's appearance draws it.
 		var c id
 		appearance := class("NSAppearance")

@@ -38,6 +38,7 @@ func (rt *engine) preferences() Preferences {
 			HighContrast: p.HighContrast,
 			TextScale:    float32(p.TextScale),
 		}
+		rt.barsAlways = p.ScrollBarsAlways
 		if rt.prefs.TextScale <= 0 {
 			rt.prefs.TextScale = 1
 		}

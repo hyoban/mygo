@@ -912,6 +912,10 @@ type Preferences struct {
 	// TextScale is how many times larger than usual text should be, as
 	// Windows's and GNOME's text size settings say; 0 or 1 for usual.
 	TextScale float64
+	// ScrollBarsAlways asks for scroll bars that always show, as macOS's
+	// Show scroll bars: Always, or a mouse without a touchpad, gives
+	// AppKit's legacy scrollers.
+	ScrollBarsAlways bool
 }
 
 // FontRendering is how the desktop's settings say to rasterize text, as

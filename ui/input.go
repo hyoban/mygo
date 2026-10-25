@@ -64,7 +64,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		}
 	case platform.PointerScroll:
 		rt.pointerMove(x, y)
-		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise, ev.Momentum)
+		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise, ev.Momentum, ev.ScrollEnded)
 	case platform.PointerZoom:
 		rt.pointerMove(x, y)
 		rt.zoom(float32(ev.Scale), Modifiers(ev.Mods))
@@ -485,7 +485,12 @@ func (rt *engine) pointerUp(button, clicks int) {
 	rt.requestFrame()
 }
 
-func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool) {
+func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum, ended bool) {
+	if ended {
+		// The fingers let go, or the momentum came to an end: what they
+		// stretched springs back, after this event's move.
+		defer rt.releaseStretches()
+	}
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
 	rt.chain = chain[:0]
 	if h := rt.handler(chain); h != nil && rt.deliver(h, InputEvent{Kind: InputScroll, DX: dx, DY: dy, Mods: mods, Precise: precise, Momentum: momentum}) {
@@ -517,6 +522,12 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool)
 			continue
 		}
 		s.wheel = nil
+		if precise && rt.appKitScrolling && s.elasticAlong(sx, sy) {
+			// A touchpad holds on to the container it scrolls, past its
+			// ends.
+			rt.pull(s, sx, sy, momentum)
+			return
+		}
 		if scrollBy(s, sx, sy) {
 			rt.requestFrame()
 			return

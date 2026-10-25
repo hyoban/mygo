@@ -275,10 +275,13 @@ type SurfaceEvent struct {
 	Clicks int
 	// DX and DY are scroll distances in DIPs; Precise marks touchpads and
 	// other devices that scroll by pixels rather than by lines. Momentum
-	// marks scrolling that continues after the fingers leave a touchpad.
-	DX, DY   float64
-	Precise  bool
-	Momentum bool
+	// marks scrolling that continues after the fingers leave a touchpad,
+	// and ScrollEnded the event that ends the fingers' scrolling or its
+	// momentum, where the backend tells (macOS).
+	DX, DY      float64
+	Precise     bool
+	Momentum    bool
+	ScrollEnded bool
 	// Scale is PointerZoom's.
 	Scale float64
 	Key   Key

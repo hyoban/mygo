@@ -3,6 +3,7 @@ package ui
 import (
 	"log"
 	"os"
+	"runtime"
 	"slices"
 	"time"
 
@@ -76,6 +77,7 @@ func FontFamilies() []FontFamily {
 func (v *Content) AttachContent(conn *surface.Conn) {
 	h := &windowHost{conn: conn}
 	rt := newRuntime(v.view, h)
+	rt.appKitScrolling = runtime.GOOS == "darwin"
 	h.rt = rt
 	conn.Event = h.event
 	conn.ThemeChanged = func() {

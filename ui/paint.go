@@ -986,13 +986,18 @@ func (p *Painter) scrollbars(e *node) {
 		}
 	}
 	dragging := rt.scrollDrag.st == st
+	color := theme.Scrollbar
+	if rt.appKitScrolling {
+		var a float32
+		hovered, a = p.overlayBars(e, dragging)
+		color = color.Alpha(a)
+	}
 	// A press takes the bars only where the window shows them
 	// (scrollbarPress).
 	st.barsShown = hovered || dragging
 	if !st.barsShown {
 		return
 	}
-	color := theme.Scrollbar
 	w, h := e.contentW, e.contentH
 	x, y := st.scrollX, st.scrollY
 	if dragging {
@@ -1018,6 +1023,35 @@ func (p *Painter) scrollbars(e *node) {
 		}
 		p.fill(bar, [4]float32{bar.H / 2, bar.H / 2, bar.H / 2, bar.H / 2}, color, 0, Color{})
 	}
+}
+
+// How long overlay scroll bars stay after the content stops, and how long
+// they then take to fade out.
+const barsLinger, barsFade = 700 * time.Millisecond, 250 * time.Millisecond
+
+// overlayBars reports whether the scroll bars of e show, as AppKit's
+// overlay scrollers, and how opaque: always where the desktop asks for
+// them always, while dragged or the pointer is on a track, and for a
+// moment after the content scrolled, fading out.
+func (p *Painter) overlayBars(e *node, dragging bool) (shown bool, alpha float32) {
+	st, rt := e.st, e.c.rt
+	now := p.Now()
+	if st.scrollX != st.barX || st.scrollY != st.barY || st.stretch != nil {
+		st.barX, st.barY, st.scrolledAt = st.scrollX, st.scrollY, now
+	}
+	if rt.barsAlways || dragging || slices.Contains(rt.hover, e.id) && rt.overScrollbar(e.id) {
+		return true, 1
+	}
+	since := now.Sub(st.scrolledAt)
+	switch {
+	case st.scrolledAt.IsZero() || since >= barsLinger+barsFade:
+		return false, 0
+	case since < barsLinger:
+		p.After(barsLinger - since)
+		return true, 1
+	}
+	p.After(time.Second / 60)
+	return true, 1 - float32(since-barsLinger)/float32(barsFade)
 }
 
 // rescale returns offset off of content scrolling as far as now as far
