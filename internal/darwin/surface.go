@@ -208,7 +208,9 @@ func (s *surface) Native() platform.SurfaceNative {
 
 // ShowsMaterial reports whether the window has a material, whose effect
 // view, behind the surface, shows where its frames are transparent.
-func (s *surface) ShowsMaterial() bool { return s.w.effect != 0 || s.w.popover != 0 }
+func (s *surface) ShowsMaterial() bool {
+	return s.w.effect != 0 || s.w.popover != 0 || s.w.toolbar != nil && len(s.w.toolbar.sidebars) > 0
+}
 
 func (s *surface) scale() float64 {
 	if f := msgFloat(s.w.win, sel("backingScaleFactor")); f > 0 {

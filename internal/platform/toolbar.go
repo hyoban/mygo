@@ -21,7 +21,7 @@ type ToolbarColumn struct {
 	// Collapsed hides the column: its separator goes, and its items join
 	// the next column's.
 	Collapsed bool
-	// Sidebar puts the system's window background behind the column.
+	// Sidebar puts the system's sidebar material behind the column.
 	Sidebar bool
 }
 

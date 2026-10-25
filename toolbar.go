@@ -28,11 +28,13 @@ type ToolbarColumn struct {
 	// Collapsed tells that the column hides: its separator goes, and its
 	// items join those of the column after it.
 	Collapsed bool
-	// Sidebar puts the system's window background behind the column,
-	// from the window's top to its bottom, as behind AppKit's sidebars
-	// and inspectors (Xcode's navigator and inspector, Mail's mailboxes),
-	// following the appearance. The column draws no background of its
-	// own there, for it to show.
+	// Sidebar puts the background of the system's sidebars behind the
+	// column, from the window's top to its bottom, as AppKit's split views
+	// put their sidebars and inspectors (Xcode's navigator and inspector,
+	// Mail's mailboxes): Liquid Glass on macOS 26, the sidebar material
+	// before. The window's Content shows a material then
+	// (ui.Context.Vibrancy), and the column draws no background of its own
+	// there, for it to show.
 	Sidebar bool
 }
 

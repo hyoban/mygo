@@ -29,7 +29,9 @@ type toolbar struct {
 	spec *platform.Toolbar
 	// sidebars are the backgrounds behind the columns that have one
 	// (ToolbarColumn.Sidebar), by column.
-	sidebars  map[int]id
+	sidebars map[int]id
+	// backdrop is the window's background under the sidebars' glass.
+	backdrop  id
 	items     map[string]id
 	labels    map[string]id
 	buttons   map[string]id
@@ -366,10 +368,9 @@ func (w *window) placeColumns(columns []platform.ToolbarColumn) {
 	}
 }
 
-// placeSidebar puts the window's background behind column i, from x,
-// where the column has one and shows, and hides it elsewhere: a box of
-// the system's window color, which follows the appearance, under the
-// content and over the window's material.
+// placeSidebar puts the sidebar's background behind column i, from x,
+// where the column has one and shows, and hides it elsewhere, under the
+// content.
 func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 	t := w.toolbar
 	v := t.sidebars[i]
@@ -382,20 +383,27 @@ func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 	bounds := msgRect(w.view, sel("bounds"))
 	frame := NSRect{Origin: NSPoint{X: x}, Size: NSSize{Width: c.Width, Height: bounds.Size.Height}}
 	if v == 0 {
-		v = msgInitRect(alloc("NSBox"), sel("initWithFrame:"), frame)
-		send(v, "setBoxType:", 4)       // NSBoxCustom
-		send(v, "setTitlePosition:", 0) // NSNoTitle
-		msgSetFloat(v, sel("setBorderWidth:"), 0)
-		send(v, "setFillColor:", uintptr(send(class("NSColor"), "windowBackgroundColor")))
+		// Liquid Glass, as AppKit's split views put their sidebars on
+		// macOS 26, over the window's background (backdrop); the sidebar
+		// material before.
+		if hasClass("NSGlassEffectView") {
+			v = msgInitRect(alloc("NSGlassEffectView"), sel("initWithFrame:"), frame)
+			send(v, "setStyle:", 0) // NSGlassEffectViewStyleRegular
+			// The variant of glass AppKit gives a split view's sidebar,
+			// darker than the regular one, which has no public name.
+			if respondsTo(v, "set_variant:") {
+				send(v, "set_variant:", 17)
+			}
+			if respondsTo(v, "set_adaptiveAppearance:") {
+				send(v, "set_adaptiveAppearance:", 1)
+			}
+			w.placeBackdrop()
+		} else {
+			v = msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), frame)
+			send(v, "setMaterial:", vibrancyMaterials["sidebar"])
+			send(v, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
+		}
 		send(v, "setWantsLayer:", 1)
-		// The sidebar material over it, blended within the window, as
-		// AppKit's sidebars tint the window's color.
-		fx := autorelease(msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), NSRect{Size: frame.Size}))
-		send(fx, "setMaterial:", vibrancyMaterials["sidebar"])
-		send(fx, "setBlendingMode:", 1) // NSVisualEffectBlendingModeWithinWindow
-		// The box's content, without the margins a box keeps around it.
-		msgSetSize(v, sel("setContentViewMargins:"), NSSize{})
-		send(v, "setContentView:", uintptr(fx))
 		send(v, "setAutoresizingMask:", 16) // height sizable
 		var above uintptr
 		if w.surface != nil {
@@ -426,6 +434,22 @@ func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 	send(layer, "setMasksToBounds:", boolArg(radius > 0))
 }
 
+// placeBackdrop puts behind all of the window the background AppKit gives
+// a window whose split view has a sidebar on macOS 26, which the sidebars'
+// glass is over: the content background material, within the window.
+func (w *window) placeBackdrop() {
+	t := w.toolbar
+	if t.backdrop != 0 {
+		return
+	}
+	t.backdrop = msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), msgRect(w.view, sel("bounds")))
+	send(t.backdrop, "setMaterial:", vibrancyMaterials["content"])
+	send(t.backdrop, "setBlendingMode:", 1) // NSVisualEffectBlendingModeWithinWindow
+	send(t.backdrop, "setState:", 1)        // NSVisualEffectStateActive
+	send(t.backdrop, "setAutoresizingMask:", nsViewWidthHeightSizable)
+	send(w.view, "addSubview:positioned:relativeTo:", uintptr(t.backdrop), nsWindowBelow, 0)
+}
+
 // removeToolbar takes the toolbar and its split view away.
 func (w *window) removeToolbar() {
 	t := w.toolbar
@@ -448,6 +472,10 @@ func (w *window) removeToolbar() {
 	for _, v := range t.sidebars {
 		send(v, "removeFromSuperview")
 		release(v)
+	}
+	if t.backdrop != 0 {
+		send(t.backdrop, "removeFromSuperview")
+		release(t.backdrop)
 	}
 	delete(toolbarOwners, t.delegate)
 	release(t.delegate)
