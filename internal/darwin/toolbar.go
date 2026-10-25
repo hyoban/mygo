@@ -430,24 +430,32 @@ func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 	if v == 0 {
 		// Liquid Glass, as AppKit's split views put their sidebars on
 		// macOS 26, over the window's background (backdrop); the sidebar
-		// material before.
+		// material before. The glass rounds all of its corners alike,
+		// whichever corners its layer masks, so it is square in a view
+		// that rounds the window's corners alone (v).
+		var glass id
+		inner := NSRect{Size: frame.Size}
 		if hasClass("NSGlassEffectView") {
-			v = msgInitRect(alloc("NSGlassEffectView"), sel("initWithFrame:"), frame)
-			send(v, "setStyle:", 0) // NSGlassEffectViewStyleRegular
+			glass = msgInitRect(alloc("NSGlassEffectView"), sel("initWithFrame:"), inner)
+			send(glass, "setStyle:", 0) // NSGlassEffectViewStyleRegular
 			// The variant of glass AppKit gives a split view's sidebar,
 			// darker than the regular one, which has no public name.
-			if respondsTo(v, "set_variant:") {
-				send(v, "set_variant:", 17)
+			if respondsTo(glass, "set_variant:") {
+				send(glass, "set_variant:", 17)
 			}
-			if respondsTo(v, "set_adaptiveAppearance:") {
-				send(v, "set_adaptiveAppearance:", 1)
+			if respondsTo(glass, "set_adaptiveAppearance:") {
+				send(glass, "set_adaptiveAppearance:", 1)
 			}
+			msgSetFloat(glass, sel("setCornerRadius:"), 0)
 			w.placeBackdrop()
 		} else {
-			v = msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), frame)
-			send(v, "setMaterial:", vibrancyMaterials["sidebar"])
-			send(v, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
+			glass = msgInitRect(alloc("NSVisualEffectView"), sel("initWithFrame:"), inner)
+			send(glass, "setMaterial:", vibrancyMaterials["sidebar"])
+			send(glass, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
 		}
+		send(glass, "setAutoresizingMask:", nsViewWidthHeightSizable)
+		v = msgInitRect(alloc("NSView"), sel("initWithFrame:"), frame)
+		send(v, "addSubview:", uintptr(autorelease(glass)))
 		send(v, "setWantsLayer:", 1)
 		send(v, "setAutoresizingMask:", 16) // height sizable
 		var above uintptr
