@@ -734,6 +734,10 @@ type Menu struct {
 	// interface laid out so: its items from the right, opening to the
 	// left of where it shows, which is its top right corner.
 	RightToLeft bool
+	// Text marks the context menu of text: the system adds its items for
+	// text to it, as macOS adds its services and Writing Tools, which the
+	// surface's TextServices serve.
+	Text bool
 }
 
 // MenuItem is a snapshot of a menu item. ID identifies the public item the

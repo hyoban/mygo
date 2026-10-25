@@ -425,6 +425,9 @@ func (rt *engine) openMenu(id uint64, button bool, pm *platform.Menu, labels, co
 	if s := rt.states[id]; s != nil && s.rtl {
 		pm.RightToLeft = true
 	}
+	if s := rt.states[id]; !button && (mr.text != 0 || s != nil && (s.editor != nil || s.textClient != nil || s.servicedText != nil)) {
+		pm.Text = true
+	}
 	mr.pending = &shownMenu{id: id, button: button, menu: pm, labels: labels, commands: commands, x: mr.x, y: mr.y, text: mr.text}
 }
 

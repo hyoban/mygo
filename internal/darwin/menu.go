@@ -224,6 +224,20 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 				defer send(view, "setUserInterfaceLayoutDirection:", uintptr(was))
 			}
 		}
+		if w, ok := pw.(*window); ok && m.Text && view != 0 {
+			// As a context menu, which AppKit gives its items for text:
+			// the services and Writing Tools that take the selection
+			// (services.go). It shows where an event is: one made up at
+			// loc, as the menu shows after the click.
+			at := msgPointFromView(view, sel("convertPoint:toView:"), loc, 0)
+			const rightMouseDown = 3
+			ev := msgMouseEvent(class("NSEvent"), sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:"),
+				rightMouseDown, at, 0, 0, sendInt(w.win, "windowNumber"), 0, 0, 1, 1)
+			if ev != 0 {
+				send(class("NSMenu"), "popUpContextMenu:withEvent:forView:", uintptr(menu), uintptr(ev), uintptr(view))
+				return
+			}
+		}
 		msgPopUpMenu(menu, sel("popUpMenuPositioningItem:atLocation:inView:"), 0, loc, view)
 	})
 }

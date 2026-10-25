@@ -107,6 +107,8 @@ func loadSurface() {
 type surface struct {
 	w        *window
 	view     id
+	// services give the system's services of text the content's.
+	services platform.TextServices
 	tracking id
 	link     id // CADisplayLink (macOS 14), nil before
 	// The display link runs while frames follow each other (linkRunning),
@@ -775,7 +777,7 @@ func registerSurfaceClass() {
 			return s.nativeDataEvent(info, platform.DataDrop)
 		}),
 	}
-	classDef("MyGoSurfaceView", "NSView", []string{"NSTextInputClient"}, append(append(methods, accessViewMethods()...), []objc.MethodDef{
+	classDef("MyGoSurfaceView", "NSView", []string{"NSTextInputClient", "NSServicesMenuRequestor"}, append(append(append(methods, accessViewMethods()...), serviceViewMethods()...), []objc.MethodDef{
 		method("isFlipped", func(self id, _ objc.SEL) bool { return true }),
 		// The pointer goes through to the web views under the surface
 		// where the content shows them (webview.go).

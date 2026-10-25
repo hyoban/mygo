@@ -79,6 +79,7 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 	}
 	e.Draw(ed.paint)
 	e.ContextMenu(ed.menu)
+	e.TextServices(ed.selectedText)
 	if o.fitContent {
 		// As high as the lines, at the width of the last frame.
 		w := ed.r.W

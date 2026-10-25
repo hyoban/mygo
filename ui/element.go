@@ -338,6 +338,8 @@ type node struct {
 	takesText  bool
 	noIME      bool // InputMethod(false)
 	copyData   func(parts []SelectedText) transfer.Data
+	// servicedText is TextServices'.
+	servicedText func() string
 
 	// Content.
 	spans    []Span // of a RichText

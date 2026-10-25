@@ -308,6 +308,18 @@ func (e *node) CopyData(fn func(parts []SelectedText) transfer.Data) *node {
 	return e
 }
 
+// TextServices gives the system's services of text, as macOS's Services
+// and Writing Tools, the text fn returns as selected in an element that
+// draws text of its own, as a code editor does, while the element has
+// the keyboard focus, and its context menu the system's items for text.
+// Return "" while nothing is selected. A text input of HandleTextInput
+// needs none: its client gives them its selection, which they may
+// replace.
+func (e *node) TextServices(fn func() string) *node {
+	e.servicedText = fn
+	return e
+}
+
 // Unselectable excludes a paragraph or container subtree from a surrounding
 // Selectable container. A Selectable container nested inside it can provide
 // a selection of its own. For inline elements, set it on their paragraph.

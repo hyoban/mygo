@@ -568,6 +568,24 @@ func (t *Tester) Menu() []string {
 	return out
 }
 
+// MenuOfText reports whether the context menu shown is one of text, to
+// which the system adds its items for text: macOS's services and Writing
+// Tools.
+func (t *Tester) MenuOfText() bool { return t.h.menu != nil && t.h.menu.Text }
+
+// ServicedText returns the text the system's services of text get, as
+// macOS's Services and Writing Tools: the selection of the element with
+// the keyboard focus, or of selectable text; and whether they may replace
+// it.
+func (t *Tester) ServicedText() (string, bool) { return textServices{t.rt}.ServicedText() }
+
+// ReplaceServicedText puts text in place of what ServicedText returns, as
+// a service that changes text does.
+func (t *Tester) ReplaceServicedText(text string) {
+	textServices{t.rt}.ReplaceServicedText(text)
+	t.settle()
+}
+
 // ChooseMenuItem chooses the item of the context menu shown labeled with
 // the last of path, in the submenus the others label, and closes the menu.
 func (t *Tester) ChooseMenuItem(path ...string) error {

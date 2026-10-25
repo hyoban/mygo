@@ -152,6 +152,23 @@ type TextInputState struct {
 	NoInputMethod bool
 }
 
+// TextServices give the system's services of text the text selected in a
+// surface's content, as macOS's Services and Writing Tools take it:
+// ServicedText returns it, "" for none, and whether it may be replaced,
+// as in a text input with the keyboard focus; ReplaceServicedText
+// replaces it, or types text at the caret where none is selected.
+// Surfaces call them on the main thread.
+type TextServices interface {
+	ServicedText() (text string, editable bool)
+	ReplaceServicedText(text string)
+}
+
+// TextServicesSurface is a Surface whose system has services of text,
+// which SetTextServices gives the content's text.
+type TextServicesSurface interface {
+	SetTextServices(TextServices)
+}
+
 // SurfaceNative holds the native objects of a Surface.
 type SurfaceNative struct {
 	// HWND is the surface's child window (Windows).

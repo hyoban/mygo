@@ -1041,7 +1041,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	s.webView = e.webView
 	s.role = e.role
 	s.input, s.caret, s.takesText, s.noIME = e.inputFn, e.caret, e.takesText, e.noIME
-	s.copyData = e.copyData
+	s.copyData, s.servicedText = e.copyData, e.servicedText
 	if s.textClient != e.textClient {
 		if s.textAdapter != nil {
 			s.textAdapter.release()

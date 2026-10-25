@@ -5517,6 +5517,23 @@ func (_handle Element) TextSelection() (int, int) {
 	return _node.TextSelection()
 }
 
+// TextServices gives the system's services of text, as macOS's Services
+// and Writing Tools, the text fn returns as selected in an element that
+// draws text of its own, as a code editor does, while the element has
+// the keyboard focus, and its context menu the system's items for text.
+// Return "" while nothing is selected. A text input of HandleTextInput
+// needs none: its client gives them its selection, which they may
+// replace.
+func (_handle Element) TextServices(fn func() string) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.TextServices(fn))
+}
+
 // Timeline returns the timeline the element keeps under key, playing it
 // as o says. Every tween added to it shares one playhead, and returns the
 // value it shows in this frame.
@@ -5548,8 +5565,10 @@ func (_handle Element) Timeline(key any, o TimelineOptions) *Timeline {
 
 // Tooltip shows s by the element when the pointer rests on it, or the
 // keyboard focus comes to it, as TooltipBase does: above the element,
-// centered, or below it where there is no room above. It describes the
-// element to assistive technology where Description does not.
+// centered, or below it where there is no room above. Where the system
+// shows tips (macOS), the pointer's is the system's, as it shows its own;
+// the keyboard focus's is drawn still. It describes the element to
+// assistive technology where Description does not.
 func (_handle Element) Tooltip(s string) Element {
 	_node := _handle.node()
 	if _node == nil {

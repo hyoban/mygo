@@ -361,7 +361,7 @@ func (rt *engine) textSelectionCommand(s *state, name string) bool {
 			rt.selection = textSelection{scope: s.textScope, anchor: textPoint{first.id, 0}, caret: textPoint{last.id, last.editor.buf.n}}
 		}
 	case "copy":
-		a, b, selected := rt.textSelectionBounds()
+		_, _, selected := rt.textSelectionBounds()
 		if !selected || rt.selection.scope != s.textScope {
 			break
 		}
@@ -369,30 +369,40 @@ func (rt *engine) textSelectionCommand(s *state, name string) bool {
 			rt.host.writeClipboardData(sc.copyData(rt.selectedTexts(s.textScope)))
 			break
 		}
-		var out strings.Builder
-		first, last := rt.textPointIndex(a), rt.textPointIndex(b)
-		wrote := false
-		for i := first; i <= last; i++ {
-			p := rt.texts[i]
-			if p.textScope != s.textScope {
-				continue
-			}
-			from, to := 0, p.editor.buf.n
-			if i == first {
-				from = min(a.at, to)
-			}
-			if i == last {
-				to = min(b.at, to)
-			}
-			if wrote {
-				out.WriteByte('\n')
-			}
-			out.WriteString(p.editor.buf.slice(from, to))
-			wrote = true
-		}
-		rt.host.writeClipboard(out.String())
+		rt.host.writeClipboard(rt.selectionText())
 	}
 	return true // other editing commands cannot change selectable text
+}
+
+// selectionText returns the text the selection of selectable text holds,
+// its paragraphs on lines of their own, as Copy puts it.
+func (rt *engine) selectionText() string {
+	a, b, selected := rt.textSelectionBounds()
+	if !selected {
+		return ""
+	}
+	var out strings.Builder
+	first, last := rt.textPointIndex(a), rt.textPointIndex(b)
+	wrote := false
+	for i := first; i <= last; i++ {
+		p := rt.texts[i]
+		if p.textScope != rt.selection.scope || p.editor == nil {
+			continue
+		}
+		from, to := 0, p.editor.buf.n
+		if i == first {
+			from = min(a.at, to)
+		}
+		if i == last {
+			to = min(b.at, to)
+		}
+		if wrote {
+			out.WriteByte('\n')
+		}
+		out.WriteString(p.editor.buf.slice(from, to))
+		wrote = true
+	}
+	return out.String()
 }
 
 // selectedTexts returns the parts of paragraphs the selection of
