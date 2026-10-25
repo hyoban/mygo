@@ -24,8 +24,8 @@ import (
 type toolbar struct {
 	tb, delegate, split id
 	// spec is the toolbar SetToolbar gave last, and items the items in
-	// the toolbar by ID, with the text field of an activity's in labels
-	// and the button of one showing a symbol and a title in buttons.
+	// the toolbar by ID, with the button of an activity and of one
+	// showing a symbol and a title in buttons.
 	spec *platform.Toolbar
 	// sidebars are the backgrounds behind the columns that have one
 	// (ToolbarColumn.Sidebar), by column.
@@ -33,7 +33,6 @@ type toolbar struct {
 	// backdrop is the window's background under the sidebars' glass.
 	backdrop  id
 	items     map[string]id
-	labels    map[string]id
 	buttons   map[string]id
 	activated func(id string, segment int)
 }
@@ -52,6 +51,11 @@ const (
 	windowToolbarStyleUnified   = 3 // NSWindowToolbarStyleUnified
 	bezelStyleToolbar           = 11
 	imageLeading                = 7 // NSImageLeading
+	// activitySpinner is the size of an activity's spinner, and
+	// activityInset where it is from its button's start: where the
+	// button's symbol would be.
+	activitySpinner = 16
+	activityInset   = 10
 )
 
 // identifier is the identifier of an item in the toolbar: the system's
@@ -135,19 +139,34 @@ func (t *toolbar) makeItem(it platform.ToolbarItem, insert bool) id {
 		item = autorelease(send(alloc("NSToolbarItem"), "initWithItemIdentifier:", uintptr(ident)))
 		switch {
 		case it.Kind == platform.ToolbarActivity:
+			// A button of the toolbar's as the others, its title beside a
+			// spinner where a symbol would be: the same capsule and
+			// padding as its neighbors, which Click answers, as stopping
+			// the work.
+			blank := autorelease(send(alloc("NSImage"), "init"))
+			msgSetSize(blank, sel("setSize:"), NSSize{Width: activitySpinner, Height: activitySpinner})
+			b := send(class("NSButton"), "buttonWithTitle:image:target:action:",
+				uintptr(nsString(it.Title)), uintptr(blank), uintptr(t.delegate), action)
+			send(b, "setBezelStyle:", bezelStyleToolbar)
+			send(b, "setImagePosition:", imageLeading)
+			send(b, "setIdentifier:", uintptr(ident))
 			spinner := autorelease(send(alloc("NSProgressIndicator"), "init"))
 			send(spinner, "setStyle:", 1)       // NSProgressIndicatorStyleSpinning
 			send(spinner, "setControlSize:", 1) // NSControlSizeSmall
 			send(spinner, "setIndeterminate:", 1)
 			send(spinner, "startAnimation:", 0)
-			text := send(class("NSTextField"), "labelWithString:", uintptr(nsString(it.Title)))
-			send(text, "setTextColor:", uintptr(send(class("NSColor"), "secondaryLabelColor")))
-			send(text, "setLineBreakMode:", 4) // NSLineBreakByTruncatingTail
-			stack := send(class("NSStackView"), "stackViewWithViews:", uintptr(nsArray(spinner, text)))
-			msgSetFloat(stack, sel("setSpacing:"), 6)
-			send(item, "setView:", uintptr(stack))
+			send(b, "addSubview:", uintptr(spinner))
+			// Over the blank image, which the title follows, as the
+			// button's own height has it centered.
+			frame := msgRect(b, sel("frame"))
+			msgSetRect(spinner, sel("setFrame:"), NSRect{
+				Origin: NSPoint{X: activityInset, Y: (frame.Size.Height - activitySpinner) / 2},
+				Size:   NSSize{Width: activitySpinner, Height: activitySpinner},
+			})
+			send(spinner, "setAutoresizingMask:", 4|8|32) // NSViewMaxXMargin, NSViewMinYMargin, NSViewMaxYMargin
+			send(item, "setView:", uintptr(b))
 			if insert {
-				t.labels[it.ID] = text
+				t.buttons[it.ID] = b
 			}
 		case it.Symbol != "" && it.Title != "":
 			// The symbol and the title side by side, which an item of
@@ -207,16 +226,12 @@ func (t *toolbar) apply(item id, it, was platform.ToolbarItem) {
 		if it.Disabled != was.Disabled {
 			send(item, "setEnabled:", boolArg(!it.Disabled))
 		}
-	case platform.ToolbarActivity:
-		if text := t.labels[it.ID]; text != 0 && it.Title != was.Title {
-			send(text, "setStringValue:", uintptr(nsString(it.Title)))
-		}
-	case platform.ToolbarButton:
+	case platform.ToolbarButton, platform.ToolbarActivity:
 		if b := t.buttons[it.ID]; b != 0 {
 			if it.Title != was.Title {
 				send(b, "setTitle:", uintptr(nsString(it.Title)))
 			}
-			if it.Symbol != was.Symbol {
+			if it.Symbol != was.Symbol && it.Kind == platform.ToolbarButton {
 				send(b, "setImage:", uintptr(symbol(it.Symbol, it.Label)))
 			}
 			if it.ToolTip != was.ToolTip {
@@ -248,7 +263,7 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 		toolbarClassOnce.Do(registerToolbarClass)
 		t := w.toolbar
 		if t == nil {
-			t = &toolbar{items: map[string]id{}, labels: map[string]id{}, buttons: map[string]id{}, sidebars: map[int]id{}}
+			t = &toolbar{items: map[string]id{}, buttons: map[string]id{}, sidebars: map[int]id{}}
 			w.toolbar = t
 			t.delegate = send(alloc("MyGoToolbarDelegate"), "init")
 			toolbarOwners[t.delegate] = w
@@ -283,7 +298,6 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 				release(item)
 			}
 			clear(t.items)
-			clear(t.labels)
 			clear(t.buttons)
 			for i, it := range spec.Items {
 				send(t.tb, "insertItemWithItemIdentifier:atIndex:", uintptr(nsString(identifier(it))), uintptr(i))

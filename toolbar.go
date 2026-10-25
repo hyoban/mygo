@@ -48,7 +48,8 @@ const (
 	// ToolbarSegmented is a segmented control of Segments, the one at
 	// Selected chosen, which Select hears the user choose.
 	ToolbarSegmented
-	// ToolbarActivity shows a spinner beside Title, of work under way.
+	// ToolbarActivity is a button showing a spinner beside Title, of work
+	// under way, which Click runs: to stop it, say.
 	ToolbarActivity
 	// ToolbarSpace is room of a fixed width between items.
 	ToolbarSpace
