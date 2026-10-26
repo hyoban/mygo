@@ -1359,6 +1359,28 @@ func Modal(c *Context, open *bool, fn func()) Element {
 	return wrapElement(_e)
 }
 
+// NativeSearchField creates a field for searching, editing *query, as the
+// system draws one: AppKit's NSSearchField on macOS, with its magnifying
+// glass, placeholder and button clearing it, which handles the keyboard
+// while it has it, as the element does a web view's page (see WebView).
+// It shows at its own height in the middle of the element, which takes
+// that height unless given one. Elsewhere it is a field of MyGo's own
+// alike. Changed reports a change of *query.
+//
+//	app.filter.Placeholder = "Filter"
+//	app.filter.OnKey = func(k ui.Key) bool { return k == ui.KeyDown && app.files.Focus(c) }
+//	ui.NativeSearchField(c, &app.filter, &app.query).FillWidth()
+func NativeSearchField(c *Context, s *SearchFieldState, query *string) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreNativeSearchField(_ctx, s, query)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
 // NewTester starts testing view in a window of width×height DIPs. Two
 // elements given one key under one parent make it panic where the second
 // was given, as apps only log it.
