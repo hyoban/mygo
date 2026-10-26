@@ -452,7 +452,22 @@ func (ed *editor) paintLine(p *ui.Painter, r ui.Rect, f *frame, line int, g line
 				ds.paintSign(p, ed, style.sign, r.X+ed.textX-v.charWidth*1.5, y, style.number)
 			}
 		}
-		v.paintRow(p, l, row, ox, y, &f.colors, nil)
+		var linkColor func(int, ui.Color) ui.Color
+		link := ed.definitionLink
+		if link.End > link.Start && link.Start >= l.start && link.End <= l.start+len(l.text) {
+			a, b := l.toDisp(link.Start-l.start, false), l.toDisp(link.End-l.start, false)
+			linkColor = func(d int, color ui.Color) ui.Color {
+				if d >= a && d < b {
+					return ct.Cursor
+				}
+				return color
+			}
+			f.rects = v.rangeRects(l, row, a, b, f.rects[:0])
+			for _, rc := range f.rects {
+				p.Fill(ui.Rect{X: ox + rc.X, Y: y + lh - 2, W: rc.W, H: 1}, ct.Cursor, 0)
+			}
+		}
+		v.paintRow(p, l, row, ox, y, &f.colors, linkColor)
 		ed.paintWhitespace(p, f, l, row, ox, y)
 		// Diagnostics under the text.
 		for _, d := range ed.diags {

@@ -82,6 +82,8 @@ type State struct {
 	OnHover func(HoverRequest)
 	// OnDefinition is called for Cmd+click (Ctrl+click elsewhere) and F12
 	// on a word, as to go to its definition.
+	// Holding Cmd over an identifier underlines it and shows a pointing
+	// hand. This offers a lookup; the app still resolves the definition.
 	OnDefinition func(offset int)
 	// OnGutterClick is called for a click on a line's number, as to set a
 	// breakpoint.

@@ -98,6 +98,16 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 			ed.doReveal()
 		}
 	}
+	ed.definitionLink = Range{}
+	if o.onDefinition != nil && c.Modifiers() == ui.Cmd {
+		x, y, over := e.PointerPosition()
+		if over && e.Hovered() && !ed.gesture.active && !ed.scrollbar.active {
+			if link, ok := ed.definitionAt(x, y); ok {
+				ed.definitionLink = link
+				e.Cursor(ui.CursorPointer).Tooltip(ed.texts.GoToDefinition())
+			}
+		}
+	}
 	// Hovering: ask what the text under the resting pointer is. The
 	// editor hears no move once the pointer has left it, so its hover
 	// tells: what the pointer passed over on its way out asks nothing, and

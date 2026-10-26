@@ -172,6 +172,8 @@ type editor struct {
 	pointer    ui.Point
 	pointerIn  bool
 	hoverLine  int
+
+	definitionLink Range // identifier under Cmd+pointer, empty without a link
 	// region is the part of the editor under the pointer, which its
 	// cursor and the scroll bars' highlight show.
 	region     region
