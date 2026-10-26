@@ -911,19 +911,13 @@ func registerSurfaceClass() {
 			if s == nil {
 				return
 			}
-			x, y := s.location(ev)
 			dx, dy := msgFloat(ev, sel("scrollingDeltaX")), msgFloat(ev, sel("scrollingDeltaY"))
 			precise := sendBool(ev, "hasPreciseScrollingDeltas")
-			// NSEventPhase: the fingers' gesture, then the momentum's.
-			const phaseEnded, phaseCancelled = 8, 16
 			phase, momentumPhase := sendInt(ev, "phase"), sendInt(ev, "momentumPhase")
-			momentum := momentumPhase != 0
-			ended := (phase|momentumPhase)&(phaseEnded|phaseCancelled) != 0
-			if !precise {
-				// A mouse wheel scrolls by lines: 40 DIPs, as in browsers.
-				dx, dy = dx*40, dy*40
-			}
-			s.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: x, Y: y, DX: -dx, DY: -dy, Precise: precise, Momentum: momentum, ScrollEnded: ended, Mods: eventMods(ev)})
+			event := scrollEvent(dx, dy, precise, phase, momentumPhase)
+			event.X, event.Y = s.location(ev)
+			event.Mods = eventMods(ev)
+			s.send(event)
 		}),
 		method("magnifyWithEvent:", func(self id, _ objc.SEL, ev id) {
 			s := b().surfaceOf(self)
