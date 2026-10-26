@@ -1894,6 +1894,38 @@ func SliderBase(c *Context, value *float64, lo float64, hi float64) Element {
 	return wrapElement(_e)
 }
 
+// SourceList creates a list of items in a tree as a sidebar shows them:
+// the system's own where it has one, AppKit's outline view in the source
+// list style on macOS, and an Outline of the rows elsewhere. roots are the
+// items at the top, children an item's children, nil for an item without
+// any, and item describes an item's row. It takes s as an Outline does:
+// s.Open holds the items open, s.List.Selected the row chosen,
+// s.List.ScrollIntoView scrolls to a row, and s.List.Handle gives the
+// list the keyboard.
+//
+// The system's list draws its rows, and handles the pointer and the
+// keyboard while it has it, as the element does a web view's page (see
+// WebView): it shows in the element's content box, through a hole in the
+// window's content, under what paints after it, and Tab leaves it for the
+// next element. It asks for the children and the rows of the items as it
+// shows them, also between frames, as they open: children and item must
+// only answer, and change nothing.
+//
+//	app.files.List.Selected = &app.file
+//	ui.SourceList(c, &app.files, []string{""}, app.entries, func(p string) ui.SourceListItem {
+//		return ui.SourceListItem{Title: path.Base(p), Symbol: "folder"}
+//	}).Grow(1)
+func SourceList[K comparable](c *Context, s *OutlineState[K], roots []K, children func(arg0 K) []K, item func(arg0 K) SourceListItem) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreSourceList[K](_ctx, s, roots, children, item)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
 // Spacer creates an empty element that takes the free space of its row or
 // column, pushing its siblings apart.
 func Spacer(c *Context) Element {

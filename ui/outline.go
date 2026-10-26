@@ -26,7 +26,25 @@ type OutlineState[K comparable] struct {
 	// Indent is the width in DIPs each level adds before a row's arrow,
 	// the theme's Space(4) when zero. It must not be negative.
 	Indent float32
-	rows   []outlineRow[K]
+	// Inset shows a SourceList's rows as an inset list's, as an
+	// inspector's, rather than a sidebar's; RowHeight is the height of
+	// all its rows, 0 for a sidebar's of the system's settings.
+	Inset     bool
+	RowHeight float32
+	rows      []outlineRow[K]
+	// native is what a SourceList keeps of s: the system's list, or the
+	// bitmaps of its drawn rows; choice what it chose after a frame.
+	native any
+	choice outlineChoice[K]
+}
+
+// outlineChoice is the row a SourceList showed chosen after a frame, its
+// item, and the items open then.
+type outlineChoice[K comparable] struct {
+	row  int
+	item K
+	ok   bool
+	open map[K]bool
 }
 
 // outlineRow is a row of an outline: its item, how deep it is, the row of
@@ -105,10 +123,16 @@ func (s *OutlineState[K]) setOpen(item K, open, all bool, children func(K) []K) 
 //		ui.Text(c, filepath.Base(path))
 //	}).Grow(1)
 func coreOutline[K comparable](c *context, s *OutlineState[K], roots []K, children func(K) []K, row func(item K)) *node {
+	s.List.Key = func(i int) any { return s.rows[i].item }
+	return outline(c, s, roots, children, row)
+}
+
+// outline builds an Outline, its choice following its items where
+// s.List.Key gives them.
+func outline[K comparable](c *context, s *OutlineState[K], roots []K, children func(K) []K, row func(item K)) *node {
 	e := coreScroll(c)
 	e.widget, e.role = "Outline", RoleTree
 	s.flatten(roots, children)
-	s.List.Key = func(i int) any { return s.rows[i].item }
 	buildList(c, e, e, &s.List, len(s.rows), func(i int) {
 		r := coreRow(c).AlignItems(Center).Gap(c.theme.Space(1)).Padding(c.theme.Space(1), c.theme.Space(2))
 		r.Role(RoleNone)
