@@ -38,6 +38,9 @@ type sourceList struct {
 	menuItem  uint64
 	menuOwner int
 	style     platform.SourceListStyle
+	// cellsEnd is where the cells of the rows that are not headings end
+	// in the outline view, 0 before one shows.
+	cellsEnd float64
 }
 
 var (
@@ -537,6 +540,17 @@ func (c *sourceCell) layout(v id) {
 		x = inset + icon + 5
 	}
 	right := w
+	if !c.item.Group && send(v, "window") != 0 {
+		c.list.rowsEnd(v, b)
+	}
+	if c.item.Group {
+		// The headings' badges end where the rows' do, which AppKit lays
+		// out narrower than its headings.
+		if end := c.list.cellsEnd; end > 0 {
+			at := msgRectToView(v, sel("convertRect:toView:"), b, c.list.outline).Origin.X
+			right = min(w, end-at)
+		}
+	}
 	if c.spinner != 0 && c.item.Busy {
 		const side = 16
 		right -= side
@@ -565,6 +579,22 @@ func (c *sourceCell) layout(v id) {
 	bottom := (h - s.Height - sub.Height) / 2
 	msgSetRect(c.subtitle, sel("setFrame:"), NSRect{Origin: NSPoint{x, bottom}, Size: NSSize{width, sub.Height}})
 	msgSetRect(c.title, sel("setFrame:"), NSRect{Origin: NSPoint{x, bottom + sub.Height}, Size: NSSize{width, s.Height}})
+}
+
+// rowsEnd notes where the cell v, of a row that is not a heading, ends in
+// the outline view, laying the headings out anew where it moved.
+func (l *sourceList) rowsEnd(v id, bounds NSRect) {
+	r := msgRectToView(v, sel("convertRect:toView:"), bounds, l.outline)
+	end := r.Origin.X + r.Size.Width
+	if end == l.cellsEnd {
+		return
+	}
+	l.cellsEnd = end
+	for h, c := range sourceCells {
+		if c.list == l && c.item.Group {
+			send(h, "setNeedsLayout:", 1)
+		}
+	}
 }
 
 // image returns the icon of row: its symbol, or its image, which the
