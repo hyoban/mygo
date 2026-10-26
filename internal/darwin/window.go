@@ -497,6 +497,9 @@ func (w *window) cleanup() {
 		return
 	}
 	w.closeWebViews()
+	if w.surface != nil {
+		w.surface.closeNativeViews()
+	}
 	w.closed = true
 	b := w.b
 	send(w.web, "removeObserver:forKeyPath:", uintptr(w.delegate), uintptr(nsString("title")))
@@ -1590,6 +1593,7 @@ func registerWindowClasses() {
 	})
 
 	registerClipViewClass()
+	registerEmbedClasses()
 	classDef("MyGoWebView", "WKWebView", nil, append(webViewMethods(), []objc.MethodDef{
 		method("mouseDown:", func(self id, cmd objc.SEL, ev id) {
 			if w := theBackend.byWebView[self]; w != nil {

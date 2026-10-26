@@ -35,6 +35,7 @@ type accessElement struct {
 	children []uint64
 	// webView is the web view whose page is the first child.
 	webView *window
+	native  *embed
 	// chosen are the rows of a list or table that are chosen, and count
 	// its rows, built or not.
 	chosen []uint64
@@ -380,6 +381,7 @@ func (s *surface) UpdateAccessibility(tree *platform.AccessTree) {
 			childObjs[n.Parent] = append(childObjs[n.Parent], objs[i])
 		}
 		grafted := map[*window]bool{}
+		graftedViews := map[*embed]bool{}
 		for i, n := range tree.Nodes {
 			el := s.elements[n.ID]
 			parent := s.view
@@ -396,11 +398,21 @@ func (s *surface) UpdateAccessibility(tree *platform.AccessTree) {
 				web, grafted[v] = v, true
 				v.accessParent = el.obj
 			}
-			if !slices.Equal(el.children, children[i]) || el.webView != web {
-				el.children, el.webView = children[i], web
+			// So is a view of the system's, inside the element showing it.
+			var native *embed
+			if v, ok := n.Native.(embedder); ok && v.embedded().s == s && !v.embedded().closed && !graftedViews[v.embedded()] {
+				native = v.embedded()
+				graftedViews[native] = true
+				native.accessParent = el.obj
+			}
+			if !slices.Equal(el.children, children[i]) || el.webView != web || el.native != native {
+				el.children, el.webView, el.native = children[i], web, native
 				kids := childObjs[i]
 				if web != nil {
 					kids = append([]id{web.web}, kids...)
+				}
+				if native != nil {
+					kids = append([]id{native.focusView}, kids...)
 				}
 				send(el.obj, "setAccessibilityChildren:", uintptr(nsArray(kids...)))
 				changed = true
@@ -409,6 +421,11 @@ func (s *surface) UpdateAccessibility(tree *platform.AccessTree) {
 		for _, v := range s.w.webViews {
 			if !grafted[v] {
 				v.accessParent = 0
+			}
+		}
+		for _, v := range s.embeds {
+			if e := v.embedded(); !graftedViews[e] {
+				e.accessParent = 0
 			}
 		}
 		// Lists and tables: their rows, those that show, those chosen, and
@@ -498,6 +515,9 @@ func (s *surface) UpdateAccessibility(tree *platform.AccessTree) {
 func (s *surface) destroyAccess() {
 	for _, v := range s.w.webViews {
 		v.accessParent = 0
+	}
+	for _, v := range s.embeds {
+		v.embedded().accessParent = 0
 	}
 	for nid, el := range s.elements {
 		postNote(el.obj, "AXUIElementDestroyed")

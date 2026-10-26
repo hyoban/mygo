@@ -766,6 +766,11 @@ func (h *windowHost) openURL(u string, done func(error)) {
 
 // placeWebViews gives the surface where the frame shows the window's web
 // views, unless it is where the last frame showed them.
+func (h *windowHost) nativeViews() platform.NativeViewSurface {
+	s, _ := h.conn.Surface.(platform.NativeViewSurface)
+	return s
+}
+
 func (h *windowHost) placeWebViews(views []placedWebView) {
 	list := make([]platform.WebViewPlacement, 0, len(views))
 	natives := make([]NativeWebView, 0, len(views))

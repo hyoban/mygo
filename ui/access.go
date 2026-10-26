@@ -348,6 +348,15 @@ func (rt *engine) accessElement(t *platform.AccessTree, e *node, parent int, scr
 			})
 		}
 	}
+	if e.native != nil {
+		// The system's list, in a node of its own that its elements are
+		// inside.
+		b := e.contentBox()
+		t.Nodes = append(t.Nodes, platform.AccessNode{
+			ID: e.id ^ pageNodeID, Parent: parent, Role: platform.RoleGroup, Native: e.native.native(), Label: e.label,
+			Bounds: platform.RectF{X: float64(b.X), Y: float64(b.Y), W: float64(b.W), H: float64(b.H)},
+		})
+	}
 	// Children in flow first, absolute ones above them, as they paint.
 	scrolled = scrolled || e.scrolls()
 	for ch := e.first; ch != nil; ch = ch.next {

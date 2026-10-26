@@ -530,8 +530,10 @@ type state struct {
 	// effectLayer is what the element and its children render into for
 	// its Effect, kept from frame to frame.
 	effectLayer *Canvas
-	// webView is the web view the element shows (WebView).
+	// webView is the web view the element shows (WebView), sourceList
+	// the system's list (SourceList).
 	webView NativeWebView
+	native  nativeView
 
 	clicks, rightClicks, doubleClicks int
 	// pressMods are the modifiers held as the pointer went down on the

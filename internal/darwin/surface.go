@@ -105,8 +105,8 @@ func loadSurface() {
 }
 
 type surface struct {
-	w        *window
-	view     id
+	w    *window
+	view id
 	// services give the system's services of text the content's.
 	services platform.TextServices
 	tracking id
@@ -130,7 +130,7 @@ type surface struct {
 	inside    bool
 	// tip is the string AppKit shows as the tooltip of the element under
 	// the pointer (SetTooltip), which it does not keep itself.
-	tip id
+	tip       id
 	ctrlClick bool // the primary button is down for a Control-click
 
 	// input is the state of the text input with the keyboard; marked is
@@ -152,6 +152,10 @@ type surface struct {
 	// placed are where the content shows the window's web views, under
 	// it (webview.go).
 	placed []platform.WebViewPlacement
+	// embeds are the views of the system's under the surface (embed.go),
+	// and placedViews where the content shows them.
+	embeds      []embedder
+	placedViews []platform.NativeViewPlacement
 }
 
 func (w *window) createSurface(content NSRect) {
@@ -209,7 +213,7 @@ func (s *surface) Native() platform.SurfaceNative {
 // ShowsMaterial reports whether the window has a material, whose effect
 // view, behind the surface, shows where its frames are transparent.
 func (s *surface) ShowsMaterial() bool {
-	return s.w.effect != 0 || s.w.popover != 0 || s.w.toolbar != nil && len(s.w.toolbar.sidebars) > 0
+	return s.w.effect != 0 || s.w.popover != 0 && len(s.w.toolbar.sidebars) > 0
 }
 
 func (s *surface) scale() float64 {
@@ -391,11 +395,11 @@ var cursorFallbacks = map[platform.Cursor]string{
 // applyCursor sets the content's cursor, unless the pointer is over a
 // web view, whose page sets its own.
 func (s *surface) applyCursor() {
-	if len(s.placed) > 0 {
+	if len(s.placed) > 0 || len(s.placedViews) > 0 {
 		p := msgPoint(class("NSEvent"), sel("mouseLocation"))
 		inWindow := msgRectToRect(s.w.win, sel("convertRectFromScreen:"), NSRect{Origin: p})
 		local := msgPointFromView(s.view, sel("convertPoint:fromView:"), inWindow.Origin, 0)
-		if s.webViewAt(local.X, local.Y) != nil {
+		if s.webViewAt(local.X, local.Y) != nil || s.nativeViewAt(local.X, local.Y) {
 			return
 		}
 	}
@@ -781,12 +785,13 @@ func registerSurfaceClass() {
 	}
 	classDef("MyGoSurfaceView", "NSView", []string{"NSTextInputClient", "NSServicesMenuRequestor"}, append(append(append(methods, accessViewMethods()...), serviceViewMethods()...), []objc.MethodDef{
 		method("isFlipped", func(self id, _ objc.SEL) bool { return true }),
-		// The pointer goes through to the web views under the surface
-		// where the content shows them (webview.go).
+		// The pointer goes through to the web views and the source lists
+		// under the surface where the content shows them (webview.go,
+		// sourcelist.go).
 		method("hitTest:", func(self id, cmd objc.SEL, p NSPoint) id {
-			if s := b().surfaceOf(self); s != nil && len(s.placed) > 0 {
+			if s := b().surfaceOf(self); s != nil && (len(s.placed) > 0 || len(s.placedViews) > 0) {
 				local := msgPointFromView(self, sel("convertPoint:fromView:"), p, send(self, "superview"))
-				if s.webViewAt(local.X, local.Y) != nil {
+				if s.webViewAt(local.X, local.Y) != nil || s.nativeViewAt(local.X, local.Y) {
 					return 0
 				}
 			}

@@ -357,6 +357,8 @@ type node struct {
 	image     *Bitmap
 	svg       *SVG // of an Icon, or an Image in its own colors
 	webView   NativeWebView
+	// sourceList is the system's list the element shows (SourceList).
+	native nativeView
 	// maximizeButton marks the window's maximize button (MaximizeButton).
 	maximizeButton bool
 	fit            Fit

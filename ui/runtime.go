@@ -76,6 +76,9 @@ type host interface {
 	// popupMenu shows a context menu at (x, y) after the event being
 	// handled; chosen receives the ID of the item chosen.
 	popupMenu(m *platform.Menu, x, y float32, chosen func(id int))
+	// nativeViews returns where the window shows views of the system's
+	// (SourceList, NativeSearchField), nil where it has none.
+	nativeViews() platform.NativeViewSurface
 	// placeWebViews shows the web views where the frame shows them, and
 	// hides the others.
 	placeWebViews(views []placedWebView)
@@ -182,6 +185,10 @@ type engine struct {
 	webPlaces []webPlace
 	webOut    []placedWebView
 	webShown  bool
+	// lists are the system's lists the frame built (SourceList), and
+	// listsShown tells that the last frame showed some.
+	lists      []nativeView
+	listsShown bool
 	// maxButton is where the frame shows the window's maximize button
 	// (MaximizeButton), and maxSent what the host got of it.
 	maxButton, maxSent Rect
@@ -510,6 +517,8 @@ func (rt *engine) runFrame() {
 	defer rt.endFrame()
 
 	rt.frame++
+	clear(rt.lists)
+	rt.lists = rt.lists[:0]
 	rt.input = false
 	rt.focusRead = false
 	rt.stats.begin(rt)
@@ -624,6 +633,7 @@ func (rt *engine) runFrame() {
 	rt.insp.lap(2)
 	rt.host.present(&rt.scene)
 	rt.placeWebViews()
+	rt.placeNativeViews()
 	if rt.maxButton != rt.maxSent {
 		rt.maxSent = rt.maxButton
 		rt.host.setMaximizeButton(rt.maxButton)
@@ -1040,7 +1050,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 		s.flags |= flagDisabled
 	}
 	s.cursor, s.tip, s.tipText = e.cursor, e.tip, e.tipText
-	s.webView = e.webView
+	s.webView, s.native = e.webView, e.native
 	s.role = e.role
 	s.input, s.caret, s.takesText, s.noIME = e.inputFn, e.caret, e.takesText, e.noIME
 	s.copyData, s.servicedText = e.copyData, e.servicedText
@@ -1075,7 +1085,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 			rt.focused = 0
 		}
 	}
-	if e.webView != nil {
+	if e.webView != nil || e.native != nil {
 		rt.noteWebView(e, clip, invisible)
 	}
 	if e.maximizeButton && !invisible && rt.maxButton == (Rect{}) && v.W > 0 && v.H > 0 {

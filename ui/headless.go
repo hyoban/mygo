@@ -200,6 +200,8 @@ func (h *headless) keepAccess(t *platform.AccessTree) {
 func (h *headless) popupMenu(m *platform.Menu, x, y float32, chosen func(int)) {
 	h.menu, h.menuAt, h.chosen = m, [2]float32{x, y}, chosen
 }
+func (h *headless) nativeViews() platform.NativeViewSurface { return nil }
+
 func (h *headless) placeWebViews(views []placedWebView) {
 	h.webViews = append(h.webViews[:0], views...)
 }

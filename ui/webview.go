@@ -44,10 +44,12 @@ func coreWebView(c *context, v NativeWebView) *node {
 	return e
 }
 
-// webPlace is where a frame shows a web view: hit is the index of its
-// element's own hit, inert that it shows but takes no pointer.
+// webPlace is where a frame shows a web view, or the system's list of a
+// SourceList: hit is the index of its element's own hit, inert that it
+// shows but takes no pointer.
 type webPlace struct {
 	v     NativeWebView
+	list  nativeView
 	frame Rect
 	clip  Rect
 	hit   int
@@ -73,7 +75,7 @@ func (rt *engine) noteWebView(e *node, clip Rect, invisible bool) {
 	if b.W <= 0 || b.H <= 0 || v.W <= 0 || v.H <= 0 {
 		return
 	}
-	rt.webPlaces = append(rt.webPlaces, webPlace{v: e.webView, frame: b, clip: v, hit: len(rt.hits), inert: invisible})
+	rt.webPlaces = append(rt.webPlaces, webPlace{v: e.webView, list: e.native, frame: b, clip: v, hit: len(rt.hits), inert: invisible})
 }
 
 // placedWebView is where a frame shows a web view, for the host.
@@ -91,6 +93,9 @@ func (rt *engine) webViewPlacements() []placedWebView {
 	out := rt.webOut[:0]
 	for i := range rt.webPlaces {
 		wp := &rt.webPlaces[i]
+		if wp.v == nil {
+			continue // a source list's
+		}
 		dup := slices.IndexFunc(rt.webPlaces[:i], func(o webPlace) bool { return o.v == wp.v })
 		if dup >= 0 && (wp.inert || !rt.webPlaces[dup].inert) {
 			continue
@@ -113,7 +118,7 @@ func (wp *webPlace) covers(hits []hit) []platform.RectF {
 	}
 	var out []platform.RectF
 	start := wp.hit
-	if start < len(hits) && hits[start].st != nil && hits[start].st.webView == wp.v {
+	if st := hitState(hits, start); st != nil && (wp.v != nil && st.webView == wp.v || wp.list != nil && st.native == wp.list) {
 		start++ // its own
 	}
 next:
@@ -131,6 +136,39 @@ next:
 		out = append(out, f)
 	}
 	return out
+}
+
+func hitState(hits []hit, i int) *state {
+	if i < len(hits) {
+		return hits[i].st
+	}
+	return nil
+}
+
+// placeNativeViews syncs the system's lists the frame built with it, and
+// tells the host where the frame shows them, as placeWebViews does web
+// views.
+func (rt *engine) placeNativeViews() {
+	for _, l := range rt.lists {
+		l.sync()
+	}
+	if len(rt.lists) == 0 && !rt.listsShown {
+		return
+	}
+	rt.listsShown = len(rt.lists) > 0
+	s := rt.host.nativeViews()
+	if s == nil {
+		return
+	}
+	var out []platform.NativeViewPlacement
+	for i := range rt.webPlaces {
+		wp := &rt.webPlaces[i]
+		if wp.list == nil || slices.ContainsFunc(out, func(p platform.NativeViewPlacement) bool { return p.View == wp.list.native() }) {
+			continue
+		}
+		out = append(out, platform.NativeViewPlacement{View: wp.list.native(), Frame: rectF(wp.frame), Clip: rectF(wp.clip), Covers: wp.covers(rt.hits)})
+	}
+	s.PlaceNativeViews(out)
 }
 
 func rectF(r Rect) platform.RectF {
