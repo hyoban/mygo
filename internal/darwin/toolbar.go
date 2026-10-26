@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/objc"
 
 	"github.com/egoist/mygo/internal/platform"
@@ -22,7 +23,15 @@ import (
 
 // toolbar is a window's NSToolbar and what it was made from.
 type toolbar struct {
-	tb, delegate, split id
+	tb, delegate id
+	// ctl is the split view controller behind the content, split its
+	// split view, columnItems its items, one a column, and applied the
+	// columns as they were last given; dragging tells that the user drags
+	// a divider.
+	ctl, split  id
+	columnItems []id
+	applied     []platform.ToolbarColumn
+	dragging    bool
 	// spec is the toolbar SetToolbar gave last, and items the items in
 	// the toolbar by ID, with the button of an activity and of one
 	// showing a symbol and a title in buttons.
@@ -99,6 +108,11 @@ func registerToolbarClass() {
 				return 0
 			}
 			return w.toolbar.makeItem(w.toolbar.spec.Items[i], insert)
+		}),
+		method("mygoColumnsResized:", func(self id, _ objc.SEL, note id) {
+			if w := toolbarOwners[self]; w != nil {
+				w.columnsResized()
+			}
 		}),
 		method("toolbarItemClicked:", func(self id, _ objc.SEL, sender id) {
 			w := toolbarOwners[self]
@@ -284,6 +298,7 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 		// The split view first, which the separators track as they are
 		// made.
 		w.placeColumns(spec.Columns)
+		w.placeSidebars()
 		spec = hideCollapsed(spec)
 		was := t.spec
 		t.spec = spec
@@ -352,78 +367,256 @@ func sameItems(a, b *platform.Toolbar) bool {
 	return true
 }
 
-// placeColumns lays the split view behind the content out as columns,
-// making it as the first ones come.
+// placeColumns lays the columns out in the split view controller behind
+// the content, making it as the first ones come: its split view's
+// dividers are the user's to drag beside the Resizable columns, which it
+// slides in and out as they collapse and show, as AppKit's sidebars and
+// inspectors. The content lays its own columns out at the widths the
+// split view's show at (ToolbarColumnWidths).
 func (w *window) placeColumns(columns []platform.ToolbarColumn) {
 	t := w.toolbar
 	if len(columns) < 2 {
 		return
 	}
-	if t.split == 0 {
-		bounds := msgRect(w.view, sel("bounds"))
-		t.split = msgInitRect(alloc("NSSplitView"), sel("initWithFrame:"), bounds)
-		send(t.split, "setVertical:", 1)
-		send(t.split, "setDividerStyle:", 2)        // NSSplitViewDividerStyleThin
-		send(t.split, "setAutoresizingMask:", 2|16) // width and height sizable
-		msgSetFloat(t.split, sel("setAlphaValue:"), 0)
-		send(w.view, "addSubview:positioned:relativeTo:", uintptr(t.split), uintptr(^uint(0)), 0) // NSWindowBelow
+	first := t.ctl == 0
+	if first {
+		t.makeColumns(w, len(columns))
 	}
-	views := arrayItems(send(t.split, "subviews"))
-	for len(views) < len(columns) {
-		v := autorelease(msgInitRect(alloc("NSView"), sel("initWithFrame:"), NSRect{}))
-		send(t.split, "addSubview:", uintptr(v))
-		views = append(views, v)
+	if len(columns) != len(t.columnItems) {
+		return // a toolbar of as many columns as the first
 	}
-	thickness := msgFloat(t.split, sel("dividerThickness"))
-	// The dividers of the split view take room between its columns, and
-	// those of the content none: the backgrounds go where the content's
-	// columns are.
-	x, at := 0.0, 0.0
-	room := toolbarRoom(columns)
 	for i, c := range columns {
-		send(views[i], "setHidden:", boolArg(c.Collapsed))
-		w.placeSidebar(i, c, at)
-		if !c.Collapsed {
-			x += room[i]
-			at += c.Width
+		item := t.columnItems[i]
+		var was platform.ToolbarColumn
+		if !first {
+			was = t.applied[i]
 		}
-		if i < len(columns)-1 {
-			msgSetPosition(t.split, sel("setPosition:ofDividerAtIndex:"), x, i)
-			if !c.Collapsed {
-				x += thickness
+		if first || c.MinWidth != was.MinWidth {
+			msgSetFloat(item, sel("setMinimumThickness:"), thickness(c.MinWidth))
+		}
+		if first || c.MaxWidth != was.MaxWidth {
+			msgSetFloat(item, sel("setMaximumThickness:"), thickness(c.MaxWidth))
+		}
+		if first || c.Resizable != was.Resizable {
+			send(item, "setCanCollapse:", boolArg(c.Resizable))
+			// The columns that keep their widths as the window resizes,
+			// the others taking what it gains or loses.
+			priority := float32(250) // NSLayoutPriorityDefaultLow
+			if c.Resizable {
+				priority = 260
 			}
+			msgSetFloat32(item, sel("setHoldingPriority:"), priority)
 		}
+	}
+	for i, c := range columns {
+		item := t.columnItems[i]
+		collapsed := sendBool(item, "isCollapsed")
+		switch {
+		case !c.Resizable && !c.Collapsed && collapsed:
+			send(item, "setCollapsed:", 0)
+		case !c.Resizable:
+		case first:
+			send(item, "setCollapsed:", boolArg(c.Collapsed))
+		case c.Collapsed != collapsed:
+			// Sliding, as AppKit's split views slide their sidebars.
+			send(send(item, "animator"), "setCollapsed:", boolArg(c.Collapsed))
+			continue
+		}
+		if c.Resizable && !c.Collapsed && !t.dragging && (first || c.Width != t.applied[i].Width) && c.Width > 0 {
+			t.setWidth(i, c.Width)
+		}
+	}
+	t.applied = slices.Clone(columns)
+}
+
+// thickness is a width of a split view item, or none for 0.
+func thickness(v float64) float64 {
+	if v <= 0 {
+		return -1 // NSSplitViewItemUnspecifiedDimension
+	}
+	return v
+}
+
+// makeColumns makes the split view controller of n columns behind the
+// content, its divider lines clear: the columns' colors part them.
+func (t *toolbar) makeColumns(w *window, n int) {
+	splitOnce.Do(func() {
+		purego.RegisterFunc(&msgSetFloat32, msgSendAddr)
+		registerSplitViewClass()
+	})
+	bounds := msgRect(w.view, sel("bounds"))
+	t.ctl = send(class("NSSplitViewController"), "alloc")
+	t.ctl = send(t.ctl, "init")
+	t.split = msgInitRect(send(class("MyGoSplitView"), "alloc"), sel("initWithFrame:"), bounds)
+	send(t.split, "setVertical:", 1)
+	send(t.split, "setDividerStyle:", 2) // NSSplitViewDividerStyleThin
+	send(t.ctl, "setSplitView:", uintptr(t.split))
+	splitOwners[t.split] = w
+	for range n {
+		vc := send(send(class("NSViewController"), "alloc"), "init")
+		view := autorelease(msgInitRect(send(class("NSView"), "alloc"), sel("initWithFrame:"), NSRect{}))
+		send(vc, "setView:", uintptr(view))
+		item := send(class("NSSplitViewItem"), "splitViewItemWithViewController:", uintptr(vc))
+		release(vc)
+		send(t.ctl, "addSplitViewItem:", uintptr(item))
+		t.columnItems = append(t.columnItems, retain(item))
+	}
+	view := send(t.ctl, "view")
+	msgSetRect(view, sel("setFrame:"), bounds)
+	send(view, "setAutoresizingMask:", nsViewWidthHeightSizable)
+	// Right under the surface, over the window's materials, which would
+	// take the pointer on its dividers otherwise; the sidebars'
+	// backgrounds over it let it through (MyGoSidebarView).
+	var above uintptr
+	if w.surface != nil {
+		above = uintptr(w.surface.view)
+	}
+	send(w.view, "addSubview:positioned:relativeTo:", uintptr(view), nsWindowBelow, above)
+	center := send(class("NSNotificationCenter"), "defaultCenter")
+	send(center, "addObserver:selector:name:object:", uintptr(t.delegate), uintptr(sel("mygoColumnsResized:")),
+		uintptr(nsString("NSSplitViewDidResizeSubviewsNotification")), uintptr(t.split))
+}
+
+// setWidth has column i show width wide, moving the divider beside it: at
+// its end, or at its start for the last.
+func (t *toolbar) setWidth(i int, width float64) {
+	views := arrayItems(send(t.split, "arrangedSubviews"))
+	if i >= len(views) {
+		return
+	}
+	if i < len(views)-1 {
+		f := msgRect(views[i], sel("frame"))
+		msgSetPosition(t.split, sel("setPosition:ofDividerAtIndex:"), f.Origin.X+width, i)
+		return
+	}
+	total := msgRect(t.split, sel("bounds")).Size.Width
+	msgSetPosition(t.split, sel("setPosition:ofDividerAtIndex:"), total-width-msgFloat(t.split, sel("dividerThickness")), i-1)
+}
+
+// columnFrames returns where the columns show now, in the content view,
+// as they slide too: those collapsed or hidden 0 wide.
+func (t *toolbar) columnFrames() []NSRect {
+	if t == nil || t.split == 0 {
+		return nil
+	}
+	views := arrayItems(send(t.split, "arrangedSubviews"))
+	frames := make([]NSRect, len(views))
+	for i, v := range views {
+		f := msgRect(v, sel("frame"))
+		if sendBool(v, "isHidden") {
+			f.Size.Width = 0
+		}
+		frames[i] = f
+	}
+	return frames
+}
+
+func (w *window) ToolbarColumnWidths() []float64 {
+	frames := w.toolbar.columnFrames()
+	if frames == nil {
+		return nil
+	}
+	widths := make([]float64, len(frames))
+	for i, f := range frames {
+		widths[i] = f.Size.Width
+	}
+	return widths
+}
+
+// columnsResized follows the columns of the split view as they change:
+// the sidebars' backgrounds go with them, and the content hears of them.
+func (w *window) columnsResized() {
+	t := w.toolbar
+	if t == nil || t.spec == nil {
+		return
+	}
+	w.placeSidebars()
+	w.placeFullScreenSidebars()
+	if changed := t.spec.ColumnsChanged; changed != nil {
+		changed(w.ToolbarColumnWidths(), t.dragging)
 	}
 }
 
-// minToolbarColumn is the least room the split view behind the content
-// gives a column that shows. AppKit lays out the toolbar of a column a few
-// points wide as that of one it collapsed, its items jumping, and keeps
-// the room of a column's items anyway: a column narrowing, as it slides
-// away, leaves its items where they have the room, as Xcode's do, while
-// its sidebar goes on.
-const minToolbarColumn = 40
+// placeSidebars puts the sidebars' backgrounds behind the columns where
+// they show now.
+func (w *window) placeSidebars() {
+	t := w.toolbar
+	frames := t.columnFrames()
+	for i, c := range t.applied {
+		if i >= len(frames) {
+			break
+		}
+		c.Width = frames[i].Size.Width
+		c.Collapsed = c.Width <= 0
+		w.placeSidebar(i, c, frames[i].Origin.X)
+	}
+}
 
-// toolbarRoom returns the widths of the columns in the split view behind
-// the content: theirs, at least minToolbarColumn where they show, the
-// widest giving the room the others take more.
-func toolbarRoom(columns []platform.ToolbarColumn) []float64 {
-	room := make([]float64, len(columns))
-	widest, more := -1, 0.0
-	for i, c := range columns {
-		if c.Collapsed {
+// dividerAt reports whether the pointer at x in the content view is the
+// split view's, on a divider the user drags: one beside a Resizable
+// column that shows, its line and a few points around it, as AppKit's thin
+// dividers take the pointer.
+func (t *toolbar) dividerAt(x float64) bool {
+	if t == nil || t.split == 0 {
+		return false
+	}
+	frames := t.columnFrames()
+	for i := 0; i+1 < len(frames) && i+1 < len(t.applied); i++ {
+		if !t.applied[i].Resizable && !t.applied[i+1].Resizable {
 			continue
 		}
-		room[i] = max(c.Width, minToolbarColumn)
-		more += room[i] - c.Width
-		if widest < 0 || c.Width > columns[widest].Width {
-			widest = i
+		if frames[i].Size.Width <= 0 || frames[i+1].Size.Width <= 0 {
+			continue
+		}
+		at := frames[i].Origin.X + frames[i].Size.Width
+		if x >= at-3 && x <= frames[i+1].Origin.X+3 {
+			return true
 		}
 	}
-	if widest >= 0 {
-		room[widest] = max(room[widest]-more, minToolbarColumn)
-	}
-	return room
+	return false
+}
+
+var (
+	splitOnce     sync.Once
+	msgSetFloat32 func(obj id, s objc.SEL, v float32)
+	// splitOwners are the windows of the toolbars' split views.
+	splitOwners = map[id]*window{}
+)
+
+// registerSplitViewClass defines MyGoSplitView, a split view whose
+// dividers draw nothing, which tells its window that the user drags one.
+func registerSplitViewClass() {
+	// A sidebar's background takes the pointer only for the views of the
+	// system's on it (embed.go): elsewhere it goes to the split view under
+	// it, which drags its dividers.
+	classDef("MyGoSidebarView", "NSView", nil, []objc.MethodDef{
+		method("hitTest:", func(self id, cmd objc.SEL, p NSPoint) id {
+			r := sendSuperPoint(self, "MyGoSidebarView", cmd, p)
+			for v := r; v != 0 && v != self; v = send(v, "superview") {
+				if sendBool(v, "isKindOfClass:", uintptr(class("MyGoEmbedClip"))) {
+					return r
+				}
+			}
+			return 0
+		}),
+	})
+	classDef("MyGoSplitView", "NSSplitView", nil, []objc.MethodDef{
+		method("dividerColor", func(self id, _ objc.SEL) id { return send(class("NSColor"), "clearColor") }),
+		method("mouseDown:", func(self id, cmd objc.SEL, ev id) {
+			w := splitOwners[self]
+			if w == nil || w.toolbar == nil {
+				sendSuper(self, "MyGoSplitView", cmd, uintptr(ev))
+				return
+			}
+			// The split view tracks the drag until the button goes up.
+			w.toolbar.dragging = true
+			sendSuper(self, "MyGoSplitView", cmd, uintptr(ev))
+			if w.toolbar != nil {
+				w.columnsResized()
+				w.toolbar.dragging = false
+			}
+		}),
+	})
 }
 
 // placeSidebar puts the sidebar's background behind column i, from x,
@@ -448,7 +641,7 @@ func (w *window) placeSidebar(i int, c platform.ToolbarColumn, x float64) {
 		if glassy {
 			w.placeBackdrop()
 		}
-		v = msgInitRect(alloc("NSView"), sel("initWithFrame:"), frame)
+		v = msgInitRect(send(class("MyGoSidebarView"), "alloc"), sel("initWithFrame:"), frame)
 		send(v, "addSubview:", uintptr(autorelease(glass)))
 		send(v, "setWantsLayer:", 1)
 		send(v, "setAutoresizingMask:", 16) // height sizable
@@ -526,8 +719,16 @@ func (w *window) placeFullScreenSidebars() {
 			container = send(titlebar, "superview")
 		}
 	}
-	at := 0.0
-	for i, c := range t.spec.Columns {
+	frames := t.columnFrames()
+	for i, c := range t.applied {
+		if i < len(frames) {
+			c.Width = frames[i].Size.Width
+			c.Collapsed = c.Width <= 0
+		}
+		at := 0.0
+		if i < len(frames) {
+			at = frames[i].Origin.X
+		}
 		v := t.fullScreenSidebars[i]
 		shows := container != 0 && c.Sidebar && !c.Collapsed
 		if !shows {
@@ -559,9 +760,6 @@ func (w *window) placeFullScreenSidebars() {
 			}
 			send(v, "setHidden:", 0)
 			msgSetRect(v, sel("setFrame:"), frame)
-		}
-		if !c.Collapsed {
-			at += c.Width
 		}
 	}
 }
@@ -597,9 +795,15 @@ func (w *window) removeToolbar() {
 	for _, item := range t.items {
 		release(item)
 	}
-	if t.split != 0 {
-		send(t.split, "removeFromSuperview")
+	if t.ctl != 0 {
+		send(send(class("NSNotificationCenter"), "defaultCenter"), "removeObserver:", uintptr(t.delegate))
+		send(send(t.ctl, "view"), "removeFromSuperview")
+		delete(splitOwners, t.split)
+		for _, item := range t.columnItems {
+			release(item)
+		}
 		release(t.split)
+		release(t.ctl)
 	}
 	for _, v := range t.sidebars {
 		send(v, "removeFromSuperview")

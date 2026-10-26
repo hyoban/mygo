@@ -1497,3 +1497,20 @@ func (w *Window) ToolbarItemBounds(id string) (platform.Rect, bool) {
 	}
 	return platform.Rect{}, false
 }
+
+// ToolbarColumnWidths returns the widths of the toolbar's columns as given:
+// the collapsed ones 0.
+func (w *Window) ToolbarColumnWidths() []float64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.toolbar == nil || len(w.toolbar.Columns) == 0 {
+		return nil
+	}
+	widths := make([]float64, len(w.toolbar.Columns))
+	for i, c := range w.toolbar.Columns {
+		if !c.Collapsed {
+			widths[i] = c.Width
+		}
+	}
+	return widths
+}

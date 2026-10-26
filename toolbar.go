@@ -19,6 +19,12 @@ type Toolbar struct {
 	// context menu offers, which the system keeps under AutosaveName.
 	Customizable bool
 	AutosaveName string
+	// ColumnsChanged runs, on the main thread, as the widths the columns
+	// show at change: as the user drags a divider between them, which
+	// user tells, for the app to keep the width; and as a column slides in
+	// or out. The Content builds again after; ToolbarColumnWidths returns
+	// the widths meanwhile.
+	ColumnsChanged func(widths []float64, user bool)
 }
 
 // ToolbarColumn is a column of a window's content under its toolbar.
@@ -36,6 +42,16 @@ type ToolbarColumn struct {
 	// (ui.Context.Vibrancy), and the column draws no background of its own
 	// there, for it to show.
 	Sidebar bool
+	// Resizable makes the column one of the system's split view's, as
+	// AppKit's sidebars and inspectors are: the user drags the divider
+	// beside it, between MinWidth and MaxWidth (0 for no bound), and it
+	// slides in and out as Collapsed changes, as the system animates it,
+	// Width being its width while it shows. The Content lays its columns
+	// out at the widths they show at (ToolbarColumnWidths), which
+	// ColumnsChanged tells as they change. A column that is not Resizable
+	// takes the room the others leave.
+	Resizable          bool
+	MinWidth, MaxWidth float64
 }
 
 // ToolbarItemKind is the kind of a ToolbarItem.
@@ -110,6 +126,12 @@ func (w *Window) SetToolbar(t *Toolbar) bool {
 		}
 		items := make(map[string]ToolbarItem, len(t.Items))
 		p := &platform.Toolbar{Customizable: t.Customizable, AutosaveName: t.AutosaveName}
+		if changed := t.ColumnsChanged; changed != nil {
+			p.ColumnsChanged = func(widths []float64, user bool) {
+				changed(widths, user)
+				w.contentChanged()
+			}
+		}
 		for _, it := range t.Items {
 			items[it.ID] = it
 			p.Items = append(p.Items, platform.ToolbarItem{
@@ -140,6 +162,19 @@ func (w *Window) toolbarActivated(id string, segment int) {
 		it.Click()
 	}
 	w.contentChanged()
+}
+
+// ToolbarColumnWidths returns the widths the toolbar's columns show at
+// now, in DIPs, as they slide in and out too: nil before the window shows
+// a toolbar of the system's with columns. Call it from the Content.
+func (w *Window) ToolbarColumnWidths() []float64 {
+	return get(w, func(n platform.Window) []float64 {
+		tw, ok := n.(platform.ToolbarWindow)
+		if !ok {
+			return nil
+		}
+		return tw.ToolbarColumnWidths()
+	})
 }
 
 // ToolbarItemBounds returns where the toolbar's item id shows, in DIPs

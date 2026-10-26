@@ -13,6 +13,10 @@ type Toolbar struct {
 	// keeps under AutosaveName.
 	Customizable bool
 	AutosaveName string
+	// ColumnsChanged tells the widths the columns show at as they change:
+	// as the user drags a divider, which user tells, and as a column
+	// slides in or out.
+	ColumnsChanged func(widths []float64, user bool)
 }
 
 // ToolbarColumn is a column of a window's content under a toolbar.
@@ -23,6 +27,11 @@ type ToolbarColumn struct {
 	Collapsed bool
 	// Sidebar puts the system's sidebar material behind the column.
 	Sidebar bool
+	// Resizable lets the user drag the divider beside the column, between
+	// MinWidth and MaxWidth (0 for none), and slides it in and out as
+	// Collapsed changes; Width is its width while it shows.
+	Resizable          bool
+	MinWidth, MaxWidth float64
 }
 
 // ToolbarItemKind is the kind of a ToolbarItem.
@@ -75,4 +84,7 @@ type ToolbarWindow interface {
 	// ToolbarItemBounds returns where an item shows, in DIPs relative to
 	// the content area, and whether it shows.
 	ToolbarItemBounds(id string) (Rect, bool)
+	// ToolbarColumnWidths returns the widths the columns show at now, as
+	// they slide too: nil before the toolbar has columns.
+	ToolbarColumnWidths() []float64
 }
