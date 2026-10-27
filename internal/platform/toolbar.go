@@ -13,6 +13,10 @@ type Toolbar struct {
 	// keeps under AutosaveName.
 	Customizable bool
 	AutosaveName string
+	// Preference shows the toolbar as a settings window's, its buttons
+	// symbols over their labels, the one Selected names chosen.
+	Preference bool
+	Selected   string
 	// ColumnsChanged tells the widths the columns show at as they change:
 	// as the user drags a divider, which user tells, and as a column
 	// slides in or out.

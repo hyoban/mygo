@@ -19,6 +19,12 @@ type Toolbar struct {
 	// context menu offers, which the system keeps under AutosaveName.
 	Customizable bool
 	AutosaveName string
+	// Style is how the toolbar shows: ToolbarUnified, the default, or
+	// ToolbarPreference, as a settings window's.
+	Style ToolbarStyle
+	// Selected is the ID of the button chosen in a ToolbarPreference
+	// toolbar: the pane the window shows.
+	Selected string
 	// ColumnsChanged runs, on the main thread, as the widths the columns
 	// show at change: as the user drags a divider between them, which
 	// user tells, for the app to keep the width; and as a column slides in
@@ -26,6 +32,20 @@ type Toolbar struct {
 	// the widths meanwhile.
 	ColumnsChanged func(widths []float64, user bool)
 }
+
+// ToolbarStyle is how a Toolbar shows.
+type ToolbarStyle uint8
+
+const (
+	// ToolbarUnified is a toolbar beside the window's title, of buttons
+	// showing their symbols, as a document window's.
+	ToolbarUnified ToolbarStyle = iota
+	// ToolbarPreference is a settings window's toolbar, as AppKit's
+	// preference style: the title over the buttons, each its symbol over
+	// its Label, the Selected one chosen, as panes of the window. Its
+	// buttons show no Title.
+	ToolbarPreference
+)
 
 // ToolbarColumn is a column of a window's content under its toolbar.
 type ToolbarColumn struct {
@@ -125,7 +145,7 @@ func (w *Window) SetToolbar(t *Toolbar) bool {
 			return true
 		}
 		items := make(map[string]ToolbarItem, len(t.Items))
-		p := &platform.Toolbar{Customizable: t.Customizable, AutosaveName: t.AutosaveName}
+		p := &platform.Toolbar{Customizable: t.Customizable, AutosaveName: t.AutosaveName, Preference: t.Style == ToolbarPreference, Selected: t.Selected}
 		if changed := t.ColumnsChanged; changed != nil {
 			p.ColumnsChanged = func(widths []float64, user bool) {
 				changed(widths, user)

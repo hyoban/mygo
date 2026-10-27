@@ -1359,6 +1359,40 @@ func Modal(c *Context, open *bool, fn func()) Element {
 	return wrapElement(_e)
 }
 
+// NativeCheckbox creates a check box toggling *checked, with its title,
+// as the system draws one: AppKit's NSButton on macOS, at its own size.
+// Elsewhere, and without a window, it is a Checkbox. Changed reports a
+// click.
+//
+//	ui.NativeCheckbox(c, &app.sync, "Sync across devices")
+func NativeCheckbox(c *Context, checked *bool, title string) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreNativeCheckbox(_ctx, checked, title)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
+// NativePopUpButton creates a pop-up button choosing one of options into
+// *selected, as the system draws one: AppKit's NSPopUpButton on macOS, at
+// its own size unless given a width. Elsewhere, and without a window, it
+// is a Select. Changed reports a new choice.
+//
+//	ui.NativePopUpButton(c, &app.plan, []string{"Free", "Pro", "Team"})
+func NativePopUpButton(c *Context, selected *string, options []string) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreNativePopUpButton(_ctx, selected, options)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
 // NativeSearchField creates a field for searching, editing *query, as the
 // system draws one: AppKit's NSSearchField on macOS, with its magnifying
 // glass, placeholder and button clearing it, which handles the keyboard
@@ -1377,6 +1411,23 @@ func NativeSearchField(c *Context, s *SearchFieldState, query *string) Element {
 	}
 	_ctx.rt.beginBuild()
 	_e := coreNativeSearchField(_ctx, s, query)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
+// NativeTextField creates a field of text editing *text, as the system
+// draws one: AppKit's NSTextField on macOS, placeholder showing while it
+// is empty, at its own height and as wide as it is given. Elsewhere, and
+// without a window, it is a TextInput. Changed reports an edit.
+//
+//	ui.NativeTextField(c, &app.name, "Name").Width(220)
+func NativeTextField(c *Context, text *string, placeholder string) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreNativeTextField(_ctx, text, placeholder)
 	_ctx.rt.endBuild()
 	return wrapElement(_e)
 }

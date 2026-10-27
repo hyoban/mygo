@@ -969,6 +969,9 @@ func (rt *engine) prune() {
 				if s.textAdapter != nil {
 					s.textAdapter.release()
 				}
+				if s.control != nil {
+					s.control.n.Close()
+				}
 				delete(rt.states, id)
 				if rt.scrollDrag.st == s {
 					rt.scrollDrag.st = nil

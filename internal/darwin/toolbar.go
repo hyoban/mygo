@@ -60,7 +60,9 @@ const (
 	spaceItemIdentifier         = "NSToolbarSpaceItem"
 	flexibleSpaceItemIdentifier = "NSToolbarFlexibleSpaceItem"
 	toolbarDisplayIconOnly      = 2 // NSToolbarDisplayModeIconOnly
+	toolbarDisplayIconAndLabel  = 1 // NSToolbarDisplayModeIconAndLabel
 	windowToolbarStyleUnified   = 3 // NSWindowToolbarStyleUnified
+	windowToolbarStylePref      = 2 // NSWindowToolbarStylePreference
 	bezelStyleToolbar           = 11
 	imageLeading                = 7 // NSImageLeading
 	// activitySpinner is the size of an activity's spinner, and
@@ -97,6 +99,13 @@ func registerToolbarClass() {
 	classDef("MyGoToolbarDelegate", "NSObject", []string{"NSToolbarDelegate"}, []objc.MethodDef{
 		method("toolbarDefaultItemIdentifiers:", func(self id, _ objc.SEL, _ id) id { return identifiers(self) }),
 		method("toolbarAllowedItemIdentifiers:", func(self id, _ objc.SEL, _ id) id { return identifiers(self) }),
+		// A settings window's panes are chosen, as the system shows them.
+		method("toolbarSelectableItemIdentifiers:", func(self id, _ objc.SEL, _ id) id {
+			if w := toolbarOwners[self]; w == nil || w.toolbar == nil || w.toolbar.spec == nil || !w.toolbar.spec.Preference {
+				return nsArray()
+			}
+			return identifiers(self)
+		}),
 		method("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:", func(self id, _ objc.SEL, _, ident id, insert bool) id {
 			w := toolbarOwners[self]
 			if w == nil || w.toolbar == nil || w.toolbar.spec == nil {
@@ -207,7 +216,9 @@ func (t *toolbar) makeItem(it platform.ToolbarItem, insert bool) id {
 				t.buttons[it.ID] = b
 			}
 		default:
-			send(item, "setBordered:", 1)
+			if !t.spec.Preference {
+				send(item, "setBordered:", 1)
+			}
 			send(item, "setTarget:", uintptr(t.delegate))
 			send(item, "setAction:", action)
 		}
@@ -310,13 +321,20 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 			}
 			t.tb = send(alloc("NSToolbar"), "initWithIdentifier:", uintptr(nsString(name)))
 			send(t.tb, "setDelegate:", uintptr(t.delegate))
-			send(t.tb, "setDisplayMode:", toolbarDisplayIconOnly)
 			send(t.tb, "setAllowsUserCustomization:", boolArg(spec.Customizable))
 			send(t.tb, "setAutosavesConfiguration:", boolArg(spec.Customizable && spec.AutosaveName != ""))
-			send(w.win, "setToolbarStyle:", windowToolbarStyleUnified)
+			if spec.Preference {
+				send(t.tb, "setDisplayMode:", toolbarDisplayIconAndLabel)
+				send(w.win, "setToolbarStyle:", windowToolbarStylePref)
+			} else {
+				send(t.tb, "setDisplayMode:", toolbarDisplayIconOnly)
+				send(w.win, "setToolbarStyle:", windowToolbarStyleUnified)
+			}
 			send(w.win, "setToolbar:", uintptr(t.tb))
+			t.selectItem()
 			return
 		}
+		defer t.selectItem()
 		if !sameItems(was, spec) {
 			// Other items: the toolbar's anew.
 			for n := sendInt(send(t.tb, "items"), "count"); n > 0; n-- {
@@ -336,6 +354,16 @@ func (w *window) SetToolbar(spec *platform.Toolbar, activated func(id string, se
 			t.apply(t.items[it.ID], it, was.Items[i])
 		}
 	})
+}
+
+// selectItem chooses the pane a settings window's toolbar has selected.
+func (t *toolbar) selectItem() {
+	if t.spec == nil || !t.spec.Preference || t.spec.Selected == "" {
+		return
+	}
+	if goString(send(t.tb, "selectedItemIdentifier")) != t.spec.Selected {
+		send(t.tb, "setSelectedItemIdentifier:", uintptr(nsString(t.spec.Selected)))
+	}
 }
 
 // hideCollapsed returns spec with the separators beside a collapsed

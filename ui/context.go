@@ -534,6 +534,9 @@ type state struct {
 	// the system's list (SourceList).
 	webView NativeWebView
 	native  nativeView
+	// control is the system's control the element shows (NativeCheckbox,
+	// NativePopUpButton, NativeTextField), kept from frame to frame.
+	control *nativeControl
 
 	clicks, rightClicks, doubleClicks int
 	// pressMods are the modifiers held as the pointer went down on the
