@@ -335,3 +335,14 @@ func TestDiffViewerCurrentHunk(t *testing.T) {
 		}
 	}
 }
+
+func TestDiffIgnoresWhitespace(t *testing.T) {
+	d := &DiffState{Old: NewBuffer("func a() {\n\treturn 1\n}\nx := 1\n"), New: NewBuffer("func a() {\n        return  1\n}\nx := 2\n")}
+	if added, deleted := d.Stats(); added != 2 || deleted != 2 {
+		t.Errorf("stats +%d −%d, want the reindented line and x changed", added, deleted)
+	}
+	d.IgnoreWhitespace = true
+	if added, deleted := d.Stats(); added != 1 || deleted != 1 {
+		t.Errorf("stats +%d −%d ignoring whitespace, want x changed alone", added, deleted)
+	}
+}

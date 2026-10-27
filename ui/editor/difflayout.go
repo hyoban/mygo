@@ -37,6 +37,7 @@ const diffSeparatorHeight = 32
 // prepare makes the hidden lines and the blocks of each side, again only
 // when what they come of changed.
 func (d *DiffState) prepare() {
+	d.model.setIgnoreSpace(d.IgnoreWhitespace)
 	d.model.update()
 	unified := d.Layout == DiffUnified
 	edA, edB := &d.eds[0], &d.eds[1]

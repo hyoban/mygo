@@ -23,6 +23,9 @@ type diffModel struct {
 	// show.
 	version uint64
 	words   map[wordKey]*hunkWords
+	// ignoreSpace compares lines without their whitespace, as git diff -w
+	// does (DiffState.IgnoreWhitespace).
+	ignoreSpace bool
 }
 
 // diffPad is how many unchanged lines around an edit are compared
@@ -38,6 +41,28 @@ func (d *diffModel) set(old, new *Buffer) {
 		d.old, d.new = old, new
 		d.oldVer, d.newVer = ^uint64(0), ^uint64(0)
 	}
+}
+
+// setIgnoreSpace chooses whether lines compare without their whitespace,
+// which compares the texts anew where it changes.
+func (d *diffModel) setIgnoreSpace(ignore bool) {
+	if d.ignoreSpace != ignore {
+		d.ignoreSpace = ignore
+		d.oldVer, d.newVer = ^uint64(0), ^uint64(0)
+	}
+}
+
+// compared returns lines as the diff compares them: without their
+// whitespace where it ignores it.
+func (d *diffModel) compared(lines []string) []string {
+	if !d.ignoreSpace {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = strings.Join(strings.Fields(l), "")
+	}
+	return out
 }
 
 // update compares the texts again where they changed, and reports
@@ -133,7 +158,7 @@ func (d *diffModel) update() bool {
 // full compares the whole texts.
 func (d *diffModel) full(oldText, newText rope.Text, oldVer, newVer uint64) {
 	d.oldText, d.newText, d.oldVer, d.newVer = oldText, newText, oldVer, newVer
-	d.hunks = diff.Lines(ropeLines(oldText, 0, oldText.LineCount()), ropeLines(newText, 0, newText.LineCount()))
+	d.hunks = diff.Lines(d.compared(ropeLines(oldText, 0, oldText.LineCount())), d.compared(ropeLines(newText, 0, newText.LineCount())))
 	d.version++
 	d.words = nil
 }
@@ -205,7 +230,7 @@ func (d *diffModel) redo(from, to int, touched []bool) {
 	}
 	a := ropeLines(d.oldText, oldFrom, oldTo)
 	b := ropeLines(d.newText, newFrom, newTo)
-	mid := diff.Lines(a, b)
+	mid := diff.Lines(d.compared(a), d.compared(b))
 	for i := range mid {
 		h := &mid[i]
 		h.A0, h.A1, h.B0, h.B1 = h.A0+oldFrom, h.A1+oldFrom, h.B0+newFrom, h.B1+newFrom

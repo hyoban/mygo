@@ -38,6 +38,9 @@ type DiffState struct {
 	NoLineNumbers bool
 	// Wrap wraps long lines rather than scrolling them sideways.
 	Wrap bool
+	// IgnoreWhitespace compares lines without their whitespace, as git
+	// diff -w does: a change of indentation or spacing alone shows none.
+	IgnoreWhitespace bool
 	// FitContent makes the viewer as high as its lines, as a file of a
 	// list of them, rather than scrolling them itself.
 	FitContent bool
@@ -211,6 +214,7 @@ func (d *DiffState) ensure() {
 		d.prepared = diffPrepared{}
 	}
 	d.model.set(d.Old, d.New)
+	d.model.setIgnoreSpace(d.IgnoreWhitespace)
 	d.model.update()
 	// The lines revealed move with edits of the old text, as Keep makes,
 	// and go with it.
