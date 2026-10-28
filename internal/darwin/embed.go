@@ -140,7 +140,9 @@ func (s *surface) materialUnder(r NSRect) id {
 			continue
 		}
 		material := subviews[0]
-		if !sendBool(material, "isKindOfClass:", uintptr(class("NSGlassEffectView"))) {
+		// Before macOS 26 the sidebar is on a visual effect view
+		// (sidebarGlass), and there is no class of glass to ask for.
+		if !hasClass("NSGlassEffectView") || !sendBool(material, "isKindOfClass:", uintptr(class("NSGlassEffectView"))) {
 			return material
 		}
 		// The glass holds what shows on it in its content view.
