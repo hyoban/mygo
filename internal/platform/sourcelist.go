@@ -23,6 +23,9 @@ type SourceList interface {
 	Expand(item uint64, open, animate bool)
 	// Expanded reports whether item shows its children.
 	Expanded(item uint64) bool
+	// Update runs f, which opens and closes items, laying out the rows
+	// once as it returns rather than as each opens or closes.
+	Update(f func())
 	// Refresh shows the rows of these items anew, as given, where they
 	// show.
 	Refresh(items []uint64, rows []SourceListItem)

@@ -436,15 +436,17 @@ func (b *sourceList[K]) reconcile() bool {
 // expand opens and closes the items of the rows as the frame has them,
 // sliding their rows where animate: not those of a list shown anew.
 func (b *sourceList[K]) expand(animate bool) {
-	for _, r := range b.s.rows {
-		if !r.branch {
-			continue
+	b.n.Update(func() {
+		for _, r := range b.s.rows {
+			if !r.branch {
+				continue
+			}
+			id := b.idOf(r.item)
+			if open := b.s.Open.Has(r.item); b.n.Expanded(id) != open {
+				b.n.Expand(id, open, animate)
+			}
 		}
-		id := b.idOf(r.item)
-		if open := b.s.Open.Has(r.item); b.n.Expanded(id) != open {
-			b.n.Expand(id, open, animate)
-		}
-	}
+	})
 }
 
 // drawnSourceList builds a SourceList as an Outline where the system has

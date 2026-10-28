@@ -202,6 +202,19 @@ func (l *sourceList) Expand(item uint64, open, animate bool) {
 	})
 }
 
+func (l *sourceList) Update(f func()) {
+	if l.closed {
+		f()
+		return
+	}
+	// The outline view lays out and styles the rows in view each time an
+	// item opens, unless inside updates of its own, as a filter opening
+	// hundreds of folders does.
+	send(l.outline, "beginUpdates")
+	defer send(l.outline, "endUpdates")
+	f()
+}
+
 func (l *sourceList) Expanded(item uint64) bool {
 	return !l.closed && item != 0 && sendBool(l.outline, "isItemExpanded:", uintptr(l.object(item)))
 }
