@@ -331,13 +331,19 @@ func SubpixelCoverage(a, c [3]float32, contrast, boost float32, g [4]float32) [3
 // Scene is a frame's display list.
 type Scene struct {
 	// Width and Height of the frame in device pixels; Scale is how many
-	// device pixels a DIP is (0 for 1).
+	// device pixels a DIP is (0 for 1). Zoom is how much of Scale the
+	// content's zoom makes (0 for 1): the screen's own scale is
+	// Scale/Zoom.
 	Width, Height int
-	Scale         float32
+	Scale, Zoom   float32
 	// Clear is the color the frame starts with.
-	Clear  Color
-	Ops    []Op
-	Glyphs []Glyph
+	Clear Color
+	// Background is the opaque color the content fills the window with,
+	// or transparent: what the window shows where no frame of its size
+	// shows yet, as while it grows. It draws nothing in the frame.
+	Background Color
+	Ops        []Op
+	Glyphs     []Glyph
 	// Stops holds the stops of gradients (Op.Stops).
 	Stops []Stop
 	// Effects holds the effects of OpEffect operations.

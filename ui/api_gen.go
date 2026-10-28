@@ -460,6 +460,28 @@ func (_handle *Context) SetTheme(t *Theme) {
 	_ctx.SetTheme(t)
 }
 
+// SetZoom zooms the window's content by z, as a browser zooms a page: the
+// view is laid out in a window 1/z its size and shown z times larger,
+// drawn at the screen's resolution times z, so that text, icons, vectors
+// and images stay as sharp as at that size natively, not a picture of
+// the window scaled up. 1 shows the content at its size; the zoom
+// stays until set again, and is clamped to between 0.25 and 5. A frame
+// that sets another builds again at the new size before it shows.
+//
+// What the view sees is zoomed: Size, TitleBar, Bounds and every length
+// are in the content's DIPs, z of them to the window's. The pointer, text
+// input, input methods, accessibility, context menus, drags and web views
+// follow it.
+//
+//	c.SetZoom(app.zoom) // 1.25 for 125%
+func (_handle *Context) SetZoom(z float32) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.SetZoom(z)
+}
+
 // Shortcut reports whether the key with exactly the modifiers mods was
 // pressed, wherever the keyboard focus is, unless a focused element
 // handled it first: a focused button or link takes Enter and Space, and a
@@ -576,6 +598,15 @@ func (_handle *Context) WriteClipboard(s string) {
 		return
 	}
 	_ctx.WriteClipboard(s)
+}
+
+// Zoom returns the zoom SetZoom set, 1 for none.
+func (_handle *Context) Zoom() float32 {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return 0
+	}
+	return _ctx.Zoom()
 }
 
 // Accordion creates sections, one above the other in a bordered box, that
@@ -2611,6 +2642,37 @@ func TreeItem(c *Context, label string, open *bool, children func()) Element {
 	return wrapElement(_e)
 }
 
+// Video creates an element showing a player's video, by default at its
+// size as DIPs, scaled to fit when given another size, as Image shows a
+// bitmap:
+//
+//	//go:embed waves.gif
+//	var wavesGIF []byte
+//
+//	d, err := ui.NewGIFDecoder(wavesGIF)
+//	...
+//	app.waves, err = ui.NewVideoPlayer(d)
+//	app.waves.SetLoop(true)
+//
+//	ui.Video(c, app.waves).Fill().Fit(ui.Cover)
+//
+// The video moves on only while the view builds it and some of the window
+// shows: one that went out of the view, or a window out of sight, goes on
+// from where it stood. Each frame of the video is a frame of the window,
+// which After asks for as it comes due. While the desktop asks for less
+// motion (Preferences.ReduceMotion), it shows its first frame and does
+// not play.
+func Video(c *Context, p *VideoPlayer) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreVideo(_ctx, p)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
 // View returns the content of a window whose user interface view builds,
 // for mygo.WindowOptions.Content:
 //
@@ -3096,7 +3158,8 @@ func (_handle Element) BottomPercent(p float32) Element {
 }
 
 // Bounds returns the previous frame's transformed bounding rectangle in
-// window DIPs; it is empty for an element the previous frame lacked.
+// window DIPs, the content's when zoomed (Context.SetZoom); it is empty
+// for an element the previous frame lacked.
 // LayoutBounds returns its box before visual transforms.
 func (_handle Element) Bounds() Rect {
 	_node := _handle.node()
@@ -3388,6 +3451,8 @@ func (_handle Element) ContentTransition(t ContentTransition) Element {
 //		m.Separator()
 //		m.EditItems()
 //	})
+//
+// PopoverMenu draws the same menu in the window, with the theme's look.
 func (_handle Element) ContextMenu(build func(m *Menu)) Element {
 	_node := _handle.node()
 	if _node == nil {
@@ -5019,6 +5084,47 @@ func (_handle Element) PointerPosition() (float32, float32, bool) {
 	return _node.PointerPosition()
 }
 
+// PopoverMenu gives the element a context menu, as ContextMenu does, which
+// MyGo draws in the window with the theme's look, as a popover, rather
+// than the system showing one of its own. It opens where the element is
+// clicked with the secondary button, or Control-clicked on macOS, and,
+// while the element or one inside it has the focus, below it when the
+// menu key or Shift+F10 is pressed. build fills it with the items
+// ContextMenu's function takes, and the item chosen reports Chosen as
+// there:
+//
+//	row.PopoverMenu(func(m *ui.Menu) {
+//		if m.Item("Rename").Shortcut(0, ui.KeyF2).Chosen() {
+//			app.renaming = i
+//		}
+//		if m.Item("Pinned").Checked(note.pinned).Chosen() {
+//			note.pinned = !note.pinned
+//		}
+//		m.Separator()
+//		if m.Item("Delete").Disabled(note.locked).Chosen() {
+//			app.delete(i)
+//		}
+//	})
+//
+// The menu takes the focus as it opens and gives it back as it closes, to
+// the element that had it. Up and Down move among its items, past those
+// disabled, as do Home, End and typing the first letters of an item;
+// Right opens a submenu and Left closes it, the other way round right to
+// left (Direction); Enter and Space choose an item, Escape closes the
+// submenu on top, and a press outside the menu closes it. It shows below
+// and after where it opened, and on the other side where the window has
+// no room. Assistive technology sees a menu of items, check box items and
+// radio items, as the system's.
+func (_handle Element) PopoverMenu(build func(m *Menu)) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.PopoverMenu(build))
+}
+
 // Pressed reports whether the element is being pressed with the pointer,
 // unless it is disabled.
 func (_handle Element) Pressed() bool {
@@ -5038,7 +5144,8 @@ func (_handle Element) Pressed() bool {
 // closes then, the press going on to what is under the pointer, as
 // PopoverBase does. The last press decides: one on the button opening a
 // popover after a press elsewhere, as on a web view's page, in the same
-// frame, keeps it open.
+// frame, keeps it open. A press before the element showed, as the one
+// opening it, is not outside it: an Overlay opened by a press stays.
 func (_handle Element) PressedOutside() bool {
 	_node := _handle.node()
 	if _node == nil {
