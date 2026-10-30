@@ -213,7 +213,13 @@ rules are:
      calls `deliver`, which sends and then `Backend.Wake`s the loop. This is
      what makes `Page.Eval`, `CapturePage` and dialogs usable from event
      listeners without deadlocking. Nested runs of the dispatch source are
-     expected and safe.
+     expected and safe. A nested loop started inside a run loop observer
+     is not: CFRunLoop never runs that observer again meanwhile, and in
+     the one AppKit displays views and Core Animation commits in, no
+     window, panel or sheet would show. So native UI's frames, whose
+     handlers (`Clicked`) may show a dialog, draw outside it on macOS,
+     but those AppKit asks for, as a resize's (`drawSoon` in
+     `internal/darwin/surface.go`).
 4. **Event listeners run on the main thread**, synchronously, so cancelable
    events (`OnClose`, `OnBeforeQuit`, `OnWillNavigate`, …) can answer the
    native toolkit immediately. **IPC calls run on their own goroutines**, so
@@ -571,8 +577,14 @@ features GTK 4 lacks become X11-only code beside it.
   bar keeps one pixel of its top, under the window's border, without which
   the maximize button opens no snap layouts while the window is not
   maximized. Windows 10, which has no snap layouts, keeps none: over a
-  window that keeps any of its top it draws its whole title bar. The build
-  comes from `RtlGetVersion`, which no manifest changes.
+  window that keeps any of its top it draws its whole title bar. A
+  resizable frameless window on Windows 10 takes the visible pixel of its
+  borders into its client area too, where the content covers the line DWM
+  draws there, white whatever the content (#916), and its frame is not
+  extended for the shadow, which its invisible borders cast: extended, it
+  shows as a white line along the top. Other windows without a caption
+  extend it by a pixel, without which a window with no borders has no
+  shadow. The build comes from `RtlGetVersion`, which no manifest changes.
 - The top edge of a window without a caption (`topedge.go`), which
   `WM_NCCALCSIZE` gives to the client area, where the webview's or the
   surface's window answers `HTCLIENT`, is a child window above them: a
@@ -608,7 +620,11 @@ features GTK 4 lacks become X11-only code beside it.
   window for trays), each into a bitmap with its highlight's rounded
   corners antialiased, then copied, and excluded from the DC after, which
   keeps Windows from drawing the submenus' arrows over the chevrons;
-  `WM_INITMENUPOPUP` gives the menu the background of the items. The items
+  `WM_INITMENUPOPUP` gives the menu the background of the items. Windows
+  widens every owner-drawn item past the width it asks for, by as much as
+  it doesn't tell (not `SM_CXMENUCHECK`, #922): items ask for all they need
+  until one draws, whose width less the widest asked for in its menu is
+  that widening at the DPI, and for that much less after. The items
   keep their strings, which mnemonics, screen readers and the tests read.
   A menu with owner-drawn items loses Windows 11's frame, its window square
   under its class's drop shadow (`CS_DROPSHADOW`) along two sides: while
@@ -2200,9 +2216,14 @@ either.
   `gdk_monitor_get_refresh_rate`, the display mode's frequency from
   `EnumDisplaySettingsW`); asks for a frame (`RequestFrame`: a
   paused `CADisplayLink`, whose ticks draw frames that follow each other
-  themselves while a frame after a pause, or after a resize, draws when
-  AppKit displays the view, before macOS 14 an `NSTimer` at the display's
-  rate, `gtk_widget_queue_draw` or a tick callback of GTK's frame clock,
+  themselves while a frame after a pause draws at once, in the same pass
+  of the run loop, from the backend's queue (`drawSoon`), as does the
+  first frame of a window out of sight, which the link does not tick
+  for (`platform.FirstFrameSurface`): a window made hidden draws it
+  while hidden, which makes it ready to show, and a resize's
+  when AppKit displays the view, before macOS 14 an `NSTimer` at the
+  display's rate, `gtk_widget_queue_draw` or a tick callback of GTK's
+  frame clock,
   `InvalidateRect`); presents
   pixels drawn on the CPU (`PresentPixels`: a CGImage as the layer's
   contents, cairo in the `draw` signal, `SetDIBitsToDevice` in `WM_PAINT`;
@@ -2255,6 +2276,11 @@ either.
   with UI Automation's events.
   What assistive technology does comes back as `AccessAction` events,
   which the engine performs as the pointer or the keyboard would.
+  An element ignoring input (`IgnoreInput`: a field of the node, as
+  the flags are all taken, and of its state, which the elements inside
+  it inherit at commit) adds no hits nor stop of Tab and drops the focus,
+  but stays in the tree, its presses counted as any other's; it offers no
+  focus, nor the increments that go through the keys.
   `AccessTree.Announcements` are texts to read out once
   (`Context.Announce`, toasts, routers): `AXAnnouncementRequested` posted
   on the application with a medium priority on macOS, AtkObject's
@@ -2330,8 +2356,9 @@ either.
   focus colors appear together; holding the pointer asks for no further
   build passes. The engine lays it out with flexbox (`layout.go`) or
   as a grid (`grid.go`, CSS grid's placement and track sizing for fixed,
-  fractional and content-sized tracks), laying out again only what changed
-  since the last frame (see below); commits the boxes to the elements'
+  fractional and content-sized tracks, with the items' percentages of
+  their grid areas, as auto while the tracks are sized), laying out again
+  only what changed since the last frame (see below); commits the boxes to the elements'
   states with the hit list in paint order, the focus order and the labels;
   paints a `scene.Scene`; and presents it. Input between frames goes to the
   states of the last frame's elements. An element's identity hashes its
@@ -2737,7 +2764,9 @@ either.
   the frame (`popupMenu`), and the item chosen comes back to the function
   in the frame after, matched by place and label. A menu button opens as
   the primary button goes down on it, taking the release, as AppKit's and
-  GTK's pop-up buttons do, and for Enter, Space and Down.
+  GTK's pop-up buttons do, and for Enter, Space and Down. A toolbar's
+  overflow menu asks for an overflowed menu button's menu after the pass
+  built the button (`askMenuLater`), so the next pass builds it.
 - **Routers** (`ui/router.go`). A `Router` is a history of entries, each
   a location (an escaped path and its query) and the pages showing it, one
   per level of views: `View`'s, then each `Route.View` inside a layout's
@@ -3136,7 +3165,11 @@ either.
   not fire, and the accessibility tree is the dialog's layer and what is
   above it. Overlays register Escape as overlay shortcuts
   (`OverlayShortcut`), which the keys the focus and the elements around it
-  leave reach, the last registered (the overlay on top) first. Each element
+  leave reach, the last registered (the overlay on top) first. An element
+  takes one key a frame (`routeKeys`): from a second key for it, the keys
+  wait for the next frame, which the first changed, as a Down and an
+  Enter typed quickly into a menu, the Enter choosing the item the Down
+  highlighted. Each element
   built at the top of `Overlay` notes the focus as it opens (`openers`),
   which pruning gives back once it is gone with the focus that was in it.
   An element attached to another (`AttachTo`, which `PopoverBase` and the
@@ -3277,12 +3310,19 @@ either.
   function again at once, as the choice from a menu of the system's does
   in the next frame, or does its editing command; the overlay going gives
   the focus back to the element that had it. A menu whose element a pass
-  does not build closes (`resolveMenu`).
+  does not build closes (`resolveMenu`). `PopoverMenuButton` draws a menu
+  button's menu so (`drawnMenu.below`): opened below the button itself
+  (`menuState.below`, which `openMenuButton` sets), its panel attaches to
+  the button's bottom, flipping above it, and the button shows expanded;
+  opened from a toolbar's overflow menu, it goes at the overflow button's
+  corner as a context menu goes at its point. Opened by the keys or
+  assistive technology (`menuState.key`), it starts on its first item,
+  and a press on the button while it shows closes it (`buildMenu`).
 - **Scenes** are flat lists of operations in device pixels: rounded
   rectangles with borders of a width per side, solid or dashed, filled
   with a color, a linear gradient mixed in sRGB or Oklab, a gradient of
-  stops, linear or conic (`Scene.Stops`, which ops point into, at most 32
-  each), or stripes, the border painted with the op's gradient where it
+  stops, linear, conic or radial (`Scene.Stops`, which ops point into, at
+  most 32 each), or stripes, the border painted with the op's gradient where it
   says so (`BorderPaint`);
   shadows (blurred rounded rectangles, cut by the box casting them, as
   CSS's box-shadow is, or inner ones, inside the box where the hole they
@@ -3728,12 +3768,38 @@ either.
     `scene.Scene.Background`), and the window paints what it grew by
     around its surface with that background before fitting the surface
     to it (`platform.BackgroundSurface`, `fillUncovered`): what shows
-    meanwhile is the background, not black. Resizing the buffers takes DWM longer
+    meanwhile is the background, not black. As the window shrinks, the
+    surface takes the new size and presents its frame before DWM takes
+    the window's, so DWM may show the window at its last size for a
+    refresh, and around the surface the window's own pixels where the
+    surface was, which the swap chain covered: the window paints them with
+    the background too, under the surface, at each size (`fillUnder`),
+    unless its frames are drawn in memory onto them. Until a frame of its
+    content shows in it, the window is cloaked (`DWMWA_CLOAK`, from the
+    surface's creation): shown, it would show white while the renderer
+    starts and the first frame draws, a few hundred milliseconds (#905).
+    Windows sends it `WM_PAINT` all the same, and uncloaks it after the
+    one whose frame reached the surface (`platform.FirstFrameSurface`),
+    or a second after it was shown without one (a timer, which only an
+    idle main thread lets fire); a refresh of DWM between the present and
+    its frame showing shows the background under the surface
+    (`fillUnder`). A window made hidden gets no `WM_PAINT`: its first frame is
+    drawn while it is hidden (`drawHidden`), which makes it ready to
+    show, and it uncloaks after its first `WM_PAINT` once shown; a
+    present that DXGI reports occluded leaves the next frame to draw
+    whole. Resizing the buffers takes DWM longer
     than a frame for a window about as large as a 4K screen, so while
     the window changes size the swap chain has three buffers a quarter
-    larger than the window, and shows the window's size of them
-    (`SetSourceSize`), until a frame a second after the last change,
-    which a timer asks for, gives it two of the window's size again.
+    larger than the window, until a frame a second after the last change,
+    which a timer asks for, gives it two of the window's size again. The
+    unscaled swap chain shows those buffers whole, from the top left
+    corner, and the window clips them: showing only the window's size of
+    them (`SetSourceSize`) would stretch that part over the buffers' size,
+    magnifying the frame (#892), as it does for a swap chain for
+    composition. A frame drawn whole fills what is beyond it in the
+    buffers with the content's background (`clearWhole`), which shows
+    where the window grows within them. A swap chain that stretches, where
+    the unscaled one is refused, shows the window's size of the buffers.
     The swap chain flips in sequence (`FLIP_SEQUENTIAL`), so that a frame
     draws only what changed since the last, as Metal's (below): DXGI keeps
     what each buffer holds, and as a frame is presented with the
@@ -3952,7 +4018,15 @@ either.
   of 15 MB for half of a 4K display, in 0.01 ms instead of 1. A draw GTK
   asks for by itself, as a resize does, draws a frame in the `draw`
   signal, and repaints in the next frame what it changed outside GTK's
-  clip.
+  clip. GTK neither paints a window that does not show nor runs its
+  frame clock: until its first frame reached the surface
+  (`platform.FirstFrameSurface`), `RequestFrame` of a window made hidden
+  also adds an idle callback, which realizes the window, giving the area
+  the size it will show at, and draws that frame in memory, showing it
+  nowhere (`drawHidden`), which makes the window ready to show. A
+  GtkGLArea has no context until it shows: the frame is followed by
+  `SurfaceRenew`, so that the first in its `render` signal makes the GPU
+  renderer, which the hidden one could not.
 
   On Windows, `RequestFrame` invalidates the surface's window, whose
   `WM_PAINT` comes as soon as the message queue is empty, and frames drawn
@@ -4237,8 +4311,8 @@ renderer's (`gputest.Compare`).
   syntax. Linux
   gets a Debian package written in pure Go (`deb.go`), whose maintainer
   is `linux.maintainer`, else the `author` of package.json, else the name
-  of the app: the app in `/opt/<name>`, a `/usr/bin` link named
-  `linux.command` when there is one, the desktop entry (categories,
+  of the app: the app in `/opt/<name>`, a `/usr/bin` link for each name
+  of `linux.command`, the desktop entry (categories,
   comment, URL schemes; `Exec` is the app's path) and hicolor icons,
   depending on GTK 3 and WebKitGTK 4.1. Packages hold the same files as
   the update archive; apps installed by a package manager do not update
@@ -4247,8 +4321,8 @@ renderer's (`gputest.Compare`).
   (`installscript.go`), a POSIX sh script, the same for every
   architecture, that installs the archive for the user in
   `~/.local/<name>.app` (which updates can replace), links
-  `~/.local/bin/<linux.command>` when there is one and no other program
-  is there (and removes a `~/.local/bin/<name>` link of its own, which
+  `~/.local/bin/<command>` for each name of `linux.command` that no other
+  program has (and removes a `~/.local/bin/<name>` link of its own, which
   earlier scripts made), and registers the app's `<name>.desktop`, with
   absolute `Exec` and `Icon` paths, and `<name>.xml`, the shared-mime-info
   package of the types it defines, under `$XDG_DATA_HOME`. It then warns
