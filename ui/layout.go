@@ -73,6 +73,10 @@ func layoutTree(root *node, w, h float32) {
 	rt.consumed = false
 	rt.beginLayout(root)
 	layoutBox(root, w, h)
+	if len(rt.shifts) > 0 {
+		shiftAll(root, rt.shifts)
+		rt.shifts = rt.shifts[:0]
+	}
 	// Lists build rows as they lay out, which may ask to come into view.
 	for _, e := range root.c.reveal {
 		if !slices.Contains(rt.revealIDs, e.id) {

@@ -23,11 +23,14 @@ type diffPrepared struct {
 }
 
 // diffGap is a run of unchanged lines between hunks, from the old line
-// a and the new line b, n lines; hidden says which of them collapse.
+// a and the new line b, n lines; hidden says which of them collapse, and
+// revealed how many of those that would were expanded, which collapse
+// again.
 type diffGap struct {
 	a, b, n      int
 	hideA, hideB int // where the hidden lines start in the old and new text
 	hidden       int
+	revealed     int
 	before       bool // before the first hunk
 	after        bool // after the last
 }
@@ -75,6 +78,12 @@ func (d *DiffState) prepare() {
 	var lateA, lateB []block
 	for gi, g := range gaps {
 		if g.hidden <= 0 {
+			// Lines all expanded collapse again from a separator where
+			// they did, above the first of them.
+			if g.revealed > 0 {
+				blkA = append(blkA, block{kind: blockSeparator, height: diffSeparatorHeight, line: g.hideA, from: g.hideA, to: g.hideA, hunk: gi, id: g.a})
+				blkB = append(blkB, block{kind: blockSeparator, height: diffSeparatorHeight, line: g.hideB, from: g.hideB, to: g.hideB, hunk: gi, id: g.a})
+			}
 			continue
 		}
 		hideA = append(hideA, lineSpan{g.hideA, g.hideA + g.hidden - 1})
@@ -342,6 +351,12 @@ func (d *DiffState) gaps(nOld, nNew int) []diffGap {
 			if g.after {
 				bottom = 0
 			}
+			// The lines that collapse unless expanded, which a
+			// separator collapses again once they are.
+			if folded := n - top - bottom; folded > 1 {
+				g.revealed = folded
+				g.hideA, g.hideB = pa+top, pb+top
+			}
 			// And the lines expanded at either edge.
 			if top < n {
 				if end := d.revealedAt(pa + top); end >= 0 {
@@ -358,6 +373,12 @@ func (d *DiffState) gaps(nOld, nNew int) []diffGap {
 			if hidden > 1 {
 				g.hidden = hidden
 				g.hideA, g.hideB = pa+top, pb+top
+			}
+			g.revealed -= g.hidden
+			// The separator of lines all expanded stands where the one
+			// expanding the last of them did.
+			if at, ok := d.barAt[pa]; ok && g.hidden == 0 && g.revealed > 0 && at > g.hideA && at < pa+n {
+				g.hideA, g.hideB = at, pb+at-pa
 			}
 		}
 		out = append(out, g)

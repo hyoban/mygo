@@ -97,8 +97,14 @@ type DiffState struct {
 	revealedVer uint64
 	revealedOf  *Buffer
 	expandV     int
-	selected    DiffLineRange
-	hasSel      bool
+	// barAt says, by the old line its gap starts at, above which old line
+	// the separator of lines all expanded stands: where the separator
+	// expanding the last of them was. keep is the separator clicked, which
+	// the frame keeps where it was.
+	barAt    map[int]int
+	keep     *diffKeep
+	selected DiffLineRange
+	hasSel   bool
 	// oldActive is set while the old side of a split view has the
 	// keyboard, and stays after it goes, until the new side has it.
 	oldActive bool
@@ -220,6 +226,7 @@ func (d *DiffState) ensure() {
 	// and go with it.
 	if d.revealedOf != d.Old {
 		d.revealed, d.revealedOf, d.revealedVer = nil, d.Old, d.Old.Version()
+		clear(d.barAt)
 		d.expandV++
 	}
 	if ver := d.Old.Version(); ver != d.revealedVer {
@@ -232,6 +239,7 @@ func (d *DiffState) ensure() {
 		} else if !ok {
 			d.revealed = nil
 		}
+		clear(d.barAt)
 		d.revealedVer = ver
 		d.expandV++
 	}
@@ -276,6 +284,7 @@ func (d *DiffState) ExpandAll() {
 func (d *DiffState) CollapseAll() {
 	d.ExpandUnchanged = false
 	d.revealed = nil
+	clear(d.barAt)
 	d.expandV++
 }
 
@@ -451,6 +460,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 		if d.FitContent {
 			d.fit()
 			root.Height(float32(d.eds[1].view.heights.total()))
+			d.keepInPlace(root)
 		}
 		return root
 	}
@@ -508,6 +518,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 	if d.FitContent {
 		d.fit()
 		row.Height(float32(max(d.eds[0].view.heights.total(), d.eds[1].view.heights.total())))
+		d.keepInPlace(row)
 	}
 	return row
 }
@@ -554,6 +565,11 @@ func (d *DiffState) expand(a int, dir int, all bool) {
 		if g.a != a || g.hidden == 0 {
 			continue
 		}
+		d.keepPlace(a)
+		if d.barAt == nil {
+			d.barAt = map[int]int{}
+		}
+		d.barAt[a] = g.hideA
 		from, to := g.hideA, g.hideA+g.hidden-1
 		n := d.expansionLines()
 		switch {
@@ -567,6 +583,74 @@ func (d *DiffState) expand(a int, dir int, all bool) {
 		d.expandV++
 		return
 	}
+}
+
+// collapse hides again the lines expanded of the gap starting at old
+// line a.
+func (d *DiffState) collapse(a int) {
+	for _, g := range d.gapList {
+		if g.a != a {
+			continue
+		}
+		d.keepPlace(a)
+		delete(d.barAt, a)
+		var out []lineSpan
+		for _, sp := range d.revealed {
+			if sp.from < g.a {
+				out = append(out, lineSpan{sp.from, min(sp.to, g.a-1)})
+			}
+			if sp.to >= g.a+g.n {
+				out = append(out, lineSpan{max(sp.from, g.a+g.n), sp.to})
+			}
+		}
+		d.revealed = out
+		d.expandV++
+		return
+	}
+}
+
+// diffKeep is a separator clicked, by the old line its gap starts at,
+// and how far it was from the top of the diff.
+type diffKeep struct {
+	a int
+	y float64
+}
+
+func (d *DiffState) keepPlace(a int) {
+	if y, ok := d.separatorY(a); ok {
+		d.keep = &diffKeep{a, y}
+	}
+}
+
+// keepInPlace scrolls the container around a diff as high as its content
+// by as much as the separator clicked moved, which stays under the
+// pointer: lines collapsing or expanding above it move what is above.
+func (d *DiffState) keepInPlace(e ui.Element) {
+	k := d.keep
+	d.keep = nil
+	if k == nil || !d.FitContent {
+		return
+	}
+	if y, ok := d.separatorY(k.a); ok && y != k.y {
+		e.ShiftScroll(float32(y - k.y))
+	}
+}
+
+// separatorY returns how far the separator of the gap starting at old
+// line a is from the top of the diff, as laid out.
+func (d *DiffState) separatorY(a int) (float64, bool) {
+	h := &d.eds[1].view.heights
+	for _, b := range d.sides[1].blks {
+		if b.kind != blockSeparator || b.id != any(a) {
+			continue
+		}
+		g := h.geometry(b.line)
+		if b.below {
+			return g.below, true
+		}
+		return g.top, true
+	}
+	return 0, false
 }
 
 // revealedAt returns the last line of the lines revealed holding old line

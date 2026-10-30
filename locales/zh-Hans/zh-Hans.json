@@ -48,6 +48,8 @@
   "expandDown": "向下展开",
   "expandAll": "全部展开",
   "expand": "展开 {what}",
+  "collapse": "收起",
+  "collapseLines": "收起 {what}",
   "unmodifiedLines": "{n, plural, other {# 行未修改}}",
   "revert": "还原",
   "keep": "保留",

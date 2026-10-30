@@ -202,6 +202,19 @@
       }
     }
   },
+  "collapse": "Collapse",
+  "@collapse": {
+    "description": "Labels the button of a diff viewer that hides again the unchanged lines expanded."
+  },
+  "collapseLines": "Collapse {what}",
+  "@collapseLines": {
+    "description": "What assistive technology calls a button of a diff viewer that hides again unchanged lines expanded, as in \"Collapse 4 unmodified lines\".",
+    "placeholders": {
+      "what": {
+        "type": "String"
+      }
+    }
+  },
   "unmodifiedLines": "{n, plural, one {# unmodified line} other {# unmodified lines}}",
   "@unmodifiedLines": {
     "description": "The unchanged lines a separator of a diff viewer collapses.",

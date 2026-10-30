@@ -47,6 +47,8 @@
   "expandDown": "Expand down",
   "expandAll": "Expand all",
   "expand": "Expand {what}",
+  "collapse": "Collapse",
+  "collapseLines": "Collapse {what}",
   "unmodifiedLines": "{n, plural, one {# unmodified line} other {# unmodified lines}}",
   "revert": "Revert",
   "keep": "Keep",

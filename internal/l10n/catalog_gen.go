@@ -732,6 +732,38 @@ func (msgs Messages) Expand(what string) string {
 	return Catalog.Format(msgs.locale, "expand", map[string]any{"what": what})
 }
 
+// Collapse says "Collapse"
+// in the language the app shows.
+//
+// Labels the button of a diff viewer that hides again the unchanged lines
+// expanded.
+func Collapse() string { return In(i18n.Locale()).Collapse() }
+
+// Collapse says "Collapse"
+// in the language of msgs.
+//
+// Labels the button of a diff viewer that hides again the unchanged lines
+// expanded.
+func (msgs Messages) Collapse() string {
+	return Catalog.Format(msgs.locale, "collapse", nil)
+}
+
+// CollapseLines says "Collapse {what}"
+// in the language the app shows.
+//
+// What assistive technology calls a button of a diff viewer that hides
+// again unchanged lines expanded, as in "Collapse 4 unmodified lines".
+func CollapseLines(what string) string { return In(i18n.Locale()).CollapseLines(what) }
+
+// CollapseLines says "Collapse {what}"
+// in the language of msgs.
+//
+// What assistive technology calls a button of a diff viewer that hides
+// again unchanged lines expanded, as in "Collapse 4 unmodified lines".
+func (msgs Messages) CollapseLines(what string) string {
+	return Catalog.Format(msgs.locale, "collapseLines", map[string]any{"what": what})
+}
+
 // UnmodifiedLines says "{n, plural, one {# unmodified line} other {# unmodified lines}}"
 // in the language the app shows.
 //

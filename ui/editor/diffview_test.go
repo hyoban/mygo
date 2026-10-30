@@ -154,9 +154,35 @@ func TestDiffViewer(t *testing.T) {
 		// Expanding shows the lines.
 		d.expand(gaps[0].a, 1, true)
 		tt.Frame()
-		if d.gapList[0].hidden != 0 {
-			t.Fatalf("expanded gap %+v", d.gapList[0])
+		if g := d.gapList[0]; g.hidden != 0 || g.revealed != 97 {
+			t.Fatalf("expanded gap %+v", g)
 		}
+		// A separator stays where they were, which collapses them again,
+		// keeping the lines of the other gap expanded.
+		if total2 := ed.view.heights.total(); total2 != total+97*lh {
+			t.Fatalf("%v: expanded height %v, want %v", layout, total2, total+97*lh)
+		}
+		d.expand(d.gapList[1].a, 1, false)
+		tt.Frame()
+		if g := d.gapList[1]; g.hidden != 0 || g.revealed != 97 {
+			t.Fatalf("gap after expanding a step %+v", g)
+		}
+		d.expand(d.gapList[0].a, 1, false)
+		d.collapse(d.gapList[0].a)
+		tt.Frame()
+		if g := d.gapList[0]; g.hidden != 97 || g.revealed != 0 {
+			t.Fatalf("collapsed gap %+v", g)
+		}
+		if g := d.gapList[1]; g.hidden != 0 {
+			t.Fatalf("other gap after collapsing %+v", g)
+		}
+		d.collapse(d.gapList[1].a)
+		tt.Frame()
+		if total2 := ed.view.heights.total(); total2 != total {
+			t.Fatalf("%v: collapsed height %v, want %v", layout, total2, total)
+		}
+		d.expand(gaps[0].a, 1, true)
+		tt.Frame()
 		// Editing the new side follows: reverting the change by hand.
 		ed.sync()
 		r := &ed.view.text

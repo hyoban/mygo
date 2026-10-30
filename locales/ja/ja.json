@@ -48,6 +48,8 @@
   "expandDown": "下に展開",
   "expandAll": "すべて展開",
   "expand": "{what}を展開",
+  "collapse": "折りたたむ",
+  "collapseLines": "{what}を折りたたむ",
   "unmodifiedLines": "{n, plural, other {変更されていない # 行}}",
   "revert": "元に戻す",
   "keep": "保持",

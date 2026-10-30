@@ -20,6 +20,10 @@ import (
 type DiffSeparator struct {
 	// Lines is how many unchanged lines it collapses, 0 for a header.
 	Lines int
+	// Revealed is how many of its unchanged lines were expanded, which
+	// Collapse hides again; a separator of lines all expanded has Lines
+	// 0 and Revealed the lines.
+	Revealed int
 	// Step is how many lines ExpandUp and ExpandDown show, the
 	// DiffState's ExpansionLines.
 	Step int
@@ -44,6 +48,9 @@ func (s *DiffSeparator) ExpandUp()   { s.d.expand(s.a, -1, false) }
 func (s *DiffSeparator) ExpandDown() { s.d.expand(s.a, 1, false) }
 func (s *DiffSeparator) ExpandAll()  { s.d.expand(s.a, 1, true) }
 
+// Collapse hides again the lines expanded.
+func (s *DiffSeparator) Collapse() { s.d.collapse(s.a) }
+
 // Font is the viewer's font, and Theme its colors.
 func (s *DiffSeparator) Font() ui.Font { return s.font }
 func (s *DiffSeparator) Theme() *Theme { return s.theme }
@@ -51,7 +58,9 @@ func (s *DiffSeparator) Theme() *Theme { return s.theme }
 // DefaultSeparator builds the viewer's own separator into sep, as
 // Pierre's: a bar with chevrons expanding the lines up and down, or all
 // of them when they are few, and "N unmodified lines", which expands them
-// all; or a hunk's header. Shift expands all the lines from any button.
+// all, and a button collapsing the lines expanded; or, of lines all
+// expanded, that button and "N unmodified lines", which collapses them;
+// or a hunk's header. Shift expands all the lines from any button.
 func DefaultSeparator(c *ui.Context, sep ui.Element, s *DiffSeparator) {
 	t := c.Theme()
 	tx := l10n.In(c.Locale())
@@ -61,7 +70,7 @@ func DefaultSeparator(c *ui.Context, sep ui.Element, s *DiffSeparator) {
 		bar := ui.Row(c).Grow(1).AlignSelf(ui.Stretch).AlignItems(ui.Center).Gap(t.Space(0.5)).Padding(0, t.Space(1.5)).
 			Radius(6).Background(mixLab(ct.Background, ct.Text, 0.06))
 		bar.Children(func() {
-			if s.Lines == 0 {
+			if s.Lines == 0 && s.Revealed == 0 {
 				ui.Text(c, s.Header).Font(s.Font().Family).FontSize(s.Font().Size - 1).TextColor(t.TextMuted).SingleLine().Shrink(1)
 				return
 			}
@@ -80,6 +89,9 @@ func DefaultSeparator(c *ui.Context, sep ui.Element, s *DiffSeparator) {
 					cx, cy, d := r.X+r.W/2, r.Y+r.H/2, float32(3.5)
 					var path ui.Path
 					switch dir {
+					case 2: // collapse: chevrons pointing in
+						path.MoveTo(cx-d, cy-2-d).LineTo(cx, cy-2).LineTo(cx+d, cy-2-d)
+						path.MoveTo(cx-d, cy+2+d).LineTo(cx, cy+2).LineTo(cx+d, cy+2+d)
 					case 1:
 						path.MoveTo(cx-d, cy-d/2).LineTo(cx, cy+d/2).LineTo(cx+d, cy-d/2)
 					case -1:
@@ -91,8 +103,23 @@ func DefaultSeparator(c *ui.Context, sep ui.Element, s *DiffSeparator) {
 					p.StrokePath(&path, 1.5, t.TextMuted)
 				})
 				if b.Clicked() {
-					expand(fn)
+					if dir == 2 {
+						fn()
+					} else {
+						expand(fn)
+					}
 				}
+			}
+			label := tx.UnmodifiedLines(s.Lines)
+			if s.Lines == 0 {
+				label = tx.UnmodifiedLines(s.Revealed)
+				chevron(2, tx.Collapse(), s.Collapse)
+				b := ui.ButtonBase(c).Key("all").Padding(t.Space(0.5), t.Space(1)).Radius(4).Label(tx.CollapseLines(label)).Cursor(ui.CursorPointer)
+				b.Children(func() { ui.Text(c, label).FontSize(max(t.FontSize-1, 11)).TextColor(t.TextMuted) })
+				if b.Clicked() {
+					s.Collapse()
+				}
+				return
 			}
 			switch {
 			case s.First:
@@ -105,11 +132,13 @@ func DefaultSeparator(c *ui.Context, sep ui.Element, s *DiffSeparator) {
 				chevron(1, tx.ExpandDown(), s.ExpandDown)
 				chevron(-1, tx.ExpandUp(), s.ExpandUp)
 			}
-			label := tx.UnmodifiedLines(s.Lines)
 			b := ui.ButtonBase(c).Key("all").Padding(t.Space(0.5), t.Space(1)).Radius(4).Label(tx.Expand(label)).Cursor(ui.CursorPointer)
 			b.Children(func() { ui.Text(c, label).FontSize(max(t.FontSize-1, 11)).TextColor(t.TextMuted) })
 			if b.Clicked() {
 				s.ExpandAll()
+			}
+			if s.Revealed > 0 {
+				chevron(2, tx.Collapse(), s.Collapse)
 			}
 		})
 	})
@@ -131,7 +160,7 @@ func (d *DiffState) buildSeparators(c *ui.Context, ct *Theme) {
 		switch b.kind {
 		case blockSeparator:
 			g := d.gapList[b.hunk]
-			s.Lines, s.First, s.Last, s.a = b.to-b.from, g.before, g.after, g.a
+			s.Lines, s.Revealed, s.First, s.Last, s.a = b.to-b.from, g.revealed, g.before, g.after, g.a
 			key = fmt.Sprint("separator ", g.a)
 		case blockHeader:
 			s.Header, _ = b.id.(string)
@@ -140,8 +169,8 @@ func (d *DiffState) buildSeparators(c *ui.Context, ct *Theme) {
 			return
 		}
 		label := s.Header
-		if s.Lines > 0 {
-			label = l10n.In(c.Locale()).UnmodifiedLines(s.Lines)
+		if n := max(s.Lines, s.Revealed); n > 0 {
+			label = l10n.In(c.Locale()).UnmodifiedLines(n)
 		}
 		sep := ui.Box(c).Key(key).Absolute().Left(0).Right(ed.trackWidth()).Top(float32(top - ed.scrollY)).Height(b.height).
 			Role(ui.RoleGroup).Label(label).Cursor(ui.CursorDefault).KeepFocus().HandleInput(shield)

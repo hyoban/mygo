@@ -48,6 +48,8 @@
   "expandDown": "向下展開",
   "expandAll": "全部展開",
   "expand": "展開 {what}",
+  "collapse": "收合",
+  "collapseLines": "收合 {what}",
   "unmodifiedLines": "{n, plural, other {# 行未修改}}",
   "revert": "還原",
   "keep": "保留",

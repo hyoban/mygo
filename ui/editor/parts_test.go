@@ -457,3 +457,64 @@ func TestDiffFitContentMeasuresLinesShown(t *testing.T) {
 		t.Errorf("all lines shown, %d of their %d wraps measured", known, v.text.LineCount())
 	}
 }
+
+// A separator clicked stays where it shows in a diff that fits its
+// content, as lines expand or collapse above it, and the separator of lines
+// all expanded stands where the one expanding the last of them did.
+func TestDiffSeparatorKeepsItsPlace(t *testing.T) {
+	var lines []string
+	for i := range 400 {
+		lines = append(lines, "line "+strconv.Itoa(i))
+	}
+	old := strings.Join(lines, "\n")
+	lines[10], lines[300] = "changed 10", "changed 300"
+	nw := strings.Join(lines, "\n")
+	for _, layout := range []DiffLayout{DiffUnified, DiffSplit} {
+		d := &DiffState{Old: NewBuffer(old), New: NewBuffer(nw), Layout: layout, FitContent: true}
+		var sep *DiffSeparator
+		d.RenderSeparator = func(c *ui.Context, el ui.Element, s *DiffSeparator) {
+			if s.a == 11 {
+				sep = s
+			}
+			l := "separator " + strconv.Itoa(s.a)
+			el.Children(func() { ui.Text(c, l) })
+		}
+		tt := ui.NewTester(func(c *ui.Context) {
+			ui.Scroll(c).Fill().Children(func() {
+				ui.Box(c).Height(400)
+				DiffView(c, d).FillWidth()
+				ui.Box(c).Height(2000)
+			})
+		}, 800, 600)
+		tt.Frame()
+		tt.Frame()
+		tt.Scroll(400, 300, 0, 300)
+		tt.Frame()
+		at := func() float32 {
+			r, ok := tt.Find("separator 11")
+			if !ok {
+				t.Fatalf("layout %v: no separator of the middle gap", layout)
+			}
+			return r.Y
+		}
+		y := at()
+		for _, step := range []struct {
+			name string
+			fn   func()
+		}{
+			{"expanding down", func() { sep.ExpandDown() }},
+			{"expanding all", func() { sep.ExpandAll() }},
+			{"collapsing", func() { sep.Collapse() }},
+		} {
+			step.fn()
+			tt.Frame()
+			tt.Frame()
+			if got := at(); got != y {
+				t.Errorf("layout %v: %s moved the separator from %v to %v", layout, step.name, y, got)
+			}
+		}
+		if g := d.gapList[1]; g.hidden == 0 || g.revealed != 0 {
+			t.Errorf("layout %v: collapsed gap %+v", layout, g)
+		}
+	}
+}

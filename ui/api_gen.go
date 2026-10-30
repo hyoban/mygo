@@ -5568,6 +5568,21 @@ func (_handle Element) Shadow(x float32, y float32, blur float32, spread float32
 	return wrapElement(_node.Shadow(x, y, blur, spread, c))
 }
 
+// ShiftScroll scrolls the container around the element by dy once the
+// frame is laid out, for what the user looks at to stay where it is as
+// the element grows or shrinks by dy above it: a diff collapsing lines
+// above the separator clicked keeps the separator under the pointer.
+// Call it in the frame that changes it, once.
+func (_handle Element) ShiftScroll(dy float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.ShiftScroll(dy))
+}
+
 // Shortcut reports whether the key with exactly the modifiers mods was
 // pressed while the element or one of its descendants had the focus. The
 // innermost element handling a key gets it; a disabled one handles none.

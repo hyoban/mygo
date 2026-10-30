@@ -93,6 +93,75 @@ func (e *node) ScrollIntoView() *node {
 	return e
 }
 
+// ShiftScroll scrolls the container around the element by dy once the
+// frame is laid out, for what the user looks at to stay where it is as
+// the element grows or shrinks by dy above it: a diff collapsing lines
+// above the separator clicked keeps the separator under the pointer.
+// Call it in the frame that changes it, once.
+func (e *node) ShiftScroll(dy float32) *node {
+	if !e.hasState() || dy == 0 {
+		return e
+	}
+	rt := e.c.rt
+	for i := range rt.shifts {
+		if rt.shifts[i].id == e.id {
+			rt.shifts[i].dy += dy
+			return e
+		}
+	}
+	rt.shifts = append(rt.shifts, scrollShift{e.id, dy})
+	return e
+}
+
+type scrollShift struct {
+	id uint64
+	dy float32
+}
+
+// shiftAll scrolls the containers around the elements of root by what
+// ShiftScroll asked.
+func shiftAll(root *node, shifts []scrollShift) {
+	var walk func(e *node)
+	walk = func(e *node) {
+		if e.hidden {
+			return
+		}
+		for _, s := range shifts {
+			if s.id == e.id {
+				shiftScroll(e, s.dy)
+			}
+		}
+		for ch := e.first; ch != nil; ch = ch.next {
+			walk(ch)
+		}
+	}
+	walk(root)
+}
+
+// shiftScroll scrolls the innermost container around e by dy.
+func shiftScroll(e *node, dy float32) {
+	for ch, p := e, e.parent; p != nil; ch, p = p, p.parent {
+		if !p.scrolls() || ch.flags&flagAbsolute != 0 {
+			continue
+		}
+		p.adoptScroll()
+		st := p.st
+		_, my := p.maxScroll()
+		sy := max(0, min(st.scrollY+float64(dy), my))
+		if sy == st.scrollY {
+			return
+		}
+		st.beginMove(e.c.rt.frame)
+		st.wheel = nil
+		if p.list != nil {
+			p.relayoutList(ch, sy)
+		} else {
+			st.scrollTo(st.scrollX, sy)
+		}
+		return
+	}
+}
+
 // adoptScroll takes the offset the app set in the element's ScrollState,
 // and reports whether it was a new one.
 func (e *node) adoptScroll() bool {
