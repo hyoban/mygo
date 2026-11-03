@@ -22,6 +22,10 @@ type Preferences struct {
 	// Windows's and GNOME's text size settings say, 1 for usual: the
 	// default theme's FontSize is that much larger.
 	TextScale float32
+	// ScrollBarsAlways is that scroll bars show at all times and take
+	// room beside what they scroll, as macOS shows them with a mouse,
+	// rather than over it while it scrolls.
+	ScrollBarsAlways bool
 }
 
 // Preferences returns the settings of the desktop that controls follow.
@@ -37,6 +41,8 @@ func (rt *engine) preferences() Preferences {
 			ReduceMotion: p.ReduceMotion,
 			HighContrast: p.HighContrast,
 			TextScale:    float32(p.TextScale),
+
+			ScrollBarsAlways: p.ScrollBarsAlways,
 		}
 		rt.barsAlways = p.ScrollBarsAlways
 		if rt.prefs.TextScale <= 0 {

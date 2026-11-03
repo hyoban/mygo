@@ -14,6 +14,9 @@ import (
 // and badges at its end.
 type SourceListItem struct {
 	Title string
+	// TitlePrefix shows before the title, muted, as a commit's scope
+	// before its summary.
+	TitlePrefix string
 	// Bold shows the title bold, as a message list's subjects.
 	Bold bool
 	// Subtitle is a second line under the title, muted: give the rows
@@ -35,6 +38,11 @@ type SourceListItem struct {
 	Tint     Color
 	// ImageSize is the side of the icon in DIPs, 0 for the row's own.
 	ImageSize float32
+	// SubtitleImage is shown before the subtitle in its own colors, as a
+	// message list shows its senders' pictures: as tall as the row's
+	// icons and as wide as its proportions make it, so draw it at twice
+	// that height. The list converts it once, as Image.
+	SubtitleImage image.Image
 	// Dimmed shows the title muted.
 	Dimmed bool
 	// Badges show at the end of the row: counts, a status.
@@ -270,12 +278,15 @@ func (b *sourceList[K]) Item(id uint64) platform.SourceListItem {
 func (b *sourceList[K]) row(id uint64) platform.SourceListItem {
 	it := b.item(b.key(id))
 	r := platform.SourceListItem{
-		Title: it.Title, Bold: it.Bold, Subtitle: it.Subtitle, Symbol: it.Symbol, Template: it.Template,
+		Title: it.Title, TitlePrefix: it.TitlePrefix, Bold: it.Bold, Subtitle: it.Subtitle, Symbol: it.Symbol, Template: it.Template,
 		Tint: platformColor(it.Tint), ImageSize: float64(it.ImageSize), Dimmed: it.Dimmed, Busy: it.Busy,
 		Tooltip: it.Tooltip, Group: it.Group,
 	}
 	if it.Image != nil {
 		r.Image = b.png(it.Image)
+	}
+	if it.SubtitleImage != nil {
+		r.SubtitleImage = b.png(it.SubtitleImage)
 	}
 	for _, badge := range it.Badges {
 		r.Badges = append(r.Badges, platform.SourceListBadge{Text: badge.Text, Color: platformColor(badge.Color), Bold: badge.Bold, Digits: badge.Digits})
@@ -300,9 +311,10 @@ func platformColor(c Color) platform.Color { return platform.Color{R: c.R, G: c.
 
 // sameRow reports whether two rows show alike: the image the same one.
 func sameRow(a, b platform.SourceListItem) bool {
-	return a.Title == b.Title && a.Bold == b.Bold && a.Subtitle == b.Subtitle && a.ImageSize == b.ImageSize && a.Busy == b.Busy && a.Symbol == b.Symbol && a.Template == b.Template && a.Tint == b.Tint &&
+	return a.Title == b.Title && a.TitlePrefix == b.TitlePrefix && a.Bold == b.Bold && a.Subtitle == b.Subtitle && a.ImageSize == b.ImageSize && a.Busy == b.Busy && a.Symbol == b.Symbol && a.Template == b.Template && a.Tint == b.Tint &&
 		a.Dimmed == b.Dimmed && a.Tooltip == b.Tooltip && a.Group == b.Group && slices.Equal(a.Badges, b.Badges) &&
-		len(a.Image) == len(b.Image) && unsafe.SliceData(a.Image) == unsafe.SliceData(b.Image)
+		len(a.Image) == len(b.Image) && unsafe.SliceData(a.Image) == unsafe.SliceData(b.Image) &&
+		len(a.SubtitleImage) == len(b.SubtitleImage) && unsafe.SliceData(a.SubtitleImage) == unsafe.SliceData(b.SubtitleImage)
 }
 
 func (b *sourceList[K]) Selected(id uint64) {
@@ -359,7 +371,7 @@ func (b *sourceList[K]) TabOut(back bool) {
 // keyboard where the element took the focus, and the rows in view anew.
 func (b *sourceList[K]) sync() {
 	s := b.s
-	b.n.SetStyle(platform.SourceListStyle{Inset: s.Inset, RowHeight: float64(s.RowHeight)})
+	b.n.SetStyle(platform.SourceListStyle{Inset: s.Inset, RowHeight: float64(s.RowHeight), Flat: s.Flat})
 	rows := make([]uint64, len(s.rows))
 	for i, r := range s.rows {
 		rows[i] = b.idOf(r.item)
@@ -486,9 +498,28 @@ func drawnSourceList[K comparable](c *context, s *OutlineState[K], roots []K, ch
 			var title *node
 			lines := coreBox(c).Column().Grow(1).MinWidth(0).Gap(1)
 			lines.Children(func() {
-				title = coreText(c, it.Title).SingleLine().Ellipsis("…")
+				if it.TitlePrefix != "" && !it.Group {
+					coreRow(c).MinWidth(0).Children(func() {
+						coreText(c, it.TitlePrefix).TextColor(t.TextMuted).SingleLine().Shrink(0)
+						title = coreText(c, it.Title).SingleLine().Ellipsis("…").MinWidth(0)
+					})
+				} else {
+					title = coreText(c, it.Title).SingleLine().Ellipsis("…")
+				}
 				if it.Subtitle != "" && !it.Group {
-					coreText(c, it.Subtitle).FontSize(t.FontSize - 2).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
+					sub := coreRow(c).AlignItems(Center).Gap(t.Space(1)).MinWidth(0)
+					sub.Children(func() {
+						if it.SubtitleImage != nil {
+							bm := bitmaps[it.SubtitleImage]
+							if bm == nil {
+								bm = NewBitmap(it.SubtitleImage)
+								bitmaps[it.SubtitleImage] = bm
+							}
+							size := it.SubtitleImage.Bounds().Size()
+							coreImage(c, bm).Size(16*float32(size.X)/float32(max(size.Y, 1)), 16).Shrink(0)
+						}
+						coreText(c, it.Subtitle).FontSize(t.FontSize - 2).TextColor(t.TextMuted).SingleLine().Ellipsis("…").MinWidth(0)
+					})
 				}
 			})
 			switch {

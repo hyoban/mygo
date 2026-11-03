@@ -3,6 +3,8 @@
 package darwin
 
 import (
+	"bytes"
+	"image/png"
 	"sync"
 	"unsafe"
 
@@ -53,10 +55,12 @@ var (
 	msgFontWithSize func(cls id, s objc.SEL, size, weight float64) id
 )
 
-// sourceCell is a row's view: its icon, its title and its badges, and the
-// row it shows.
+// sourceCell is a row's view: its icon, its title, its subtitle after its
+// picture, and its badges, and the row it shows.
 type sourceCell struct {
 	image, title, subtitle id
+	subtitleImage          id
+	prefix                 id // muted, before the title
 	spinner                id // made as a row is first busy
 	badges                 []id
 	item                   platform.SourceListItem
@@ -314,6 +318,13 @@ func (l *sourceList) SetStyle(style platform.SourceListStyle) {
 		} else {
 			send(l.outline, "setRowSizeStyle:", ^uintptr(0))
 		}
+		// A list without an outline column is a table's: its rows have no
+		// room for arrows.
+		column := uintptr(0)
+		if !style.Flat {
+			column = uintptr(send(send(l.outline, "tableColumns"), "firstObject"))
+		}
+		send(l.outline, "setOutlineTableColumn:", column)
 	})
 }
 
@@ -414,12 +425,18 @@ func (l *sourceList) cell(row platform.SourceListItem) id {
 		c.title = send(class("NSTextField"), "labelWithString:", uintptr(nsString("")))
 		send(c.title, "setLineBreakMode:", 4) // NSLineBreakByTruncatingTail
 		send(v, "addSubview:", uintptr(c.title))
-		send(v, "setTextField:", uintptr(c.title))
+		// Not the cell's text field, which AppKit restyles on its own, as
+		// a chosen row's in bold: the cell colors its title itself.
+		c.prefix = send(class("NSTextField"), "labelWithString:", uintptr(nsString("")))
+		send(v, "addSubview:", uintptr(c.prefix))
 		c.subtitle = send(class("NSTextField"), "labelWithString:", uintptr(nsString("")))
 		send(c.subtitle, "setLineBreakMode:", 4)
 		send(c.subtitle, "setFont:", uintptr(msgFloatID(class("NSFont"), sel("systemFontOfSize:"), 11)))
 		send(c.subtitle, "setTextColor:", uintptr(send(class("NSColor"), "secondaryLabelColor")))
 		send(v, "addSubview:", uintptr(c.subtitle))
+		c.subtitleImage = autorelease(msgInitRect(send(class("NSImageView"), "alloc"), sel("initWithFrame:"), NSRect{}))
+		send(c.subtitleImage, "setImageScaling:", 3) // NSImageScaleProportionallyUpOrDown
+		send(v, "addSubview:", uintptr(c.subtitleImage))
 		sourceCells[v] = c // kept until the list closes
 	}
 	c.show(v, row)
@@ -431,23 +448,19 @@ func (c *sourceCell) show(v id, row platform.SourceListItem) {
 	c.item = row
 	text, _ := c.list.rowSize()
 	send(c.title, "setStringValue:", uintptr(nsString(row.Title)))
-	nsColorClass := class("NSColor")
 	switch {
 	case row.Group:
 		send(c.title, "setFont:", uintptr(msgFontWithSize(class("NSFont"), sel("systemFontOfSize:weight:"), 11, 0.3)))
-		send(c.title, "setTextColor:", uintptr(send(nsColorClass, "secondaryLabelColor")))
 	default:
 		weight := 0.0
 		if row.Bold {
 			weight = 0.4 // NSFontWeightSemibold
 		}
 		send(c.title, "setFont:", uintptr(msgFontWithSize(class("NSFont"), sel("systemFontOfSize:weight:"), text, weight)))
-		color := "labelColor"
-		if row.Dimmed {
-			color = "secondaryLabelColor"
-		}
-		send(c.title, "setTextColor:", uintptr(send(nsColorClass, color)))
 	}
+	send(c.prefix, "setStringValue:", uintptr(nsString(row.TitlePrefix)))
+	send(c.prefix, "setFont:", uintptr(send(c.title, "font")))
+	send(c.prefix, "setHidden:", boolArg(row.TitlePrefix == "" || row.Group))
 	if row.Tooltip != "" {
 		send(v, "setToolTip:", uintptr(nsString(row.Tooltip)))
 	} else {
@@ -455,6 +468,8 @@ func (c *sourceCell) show(v id, row platform.SourceListItem) {
 	}
 	send(c.subtitle, "setStringValue:", uintptr(nsString(row.Subtitle)))
 	send(c.subtitle, "setHidden:", boolArg(row.Subtitle == "" || row.Group))
+	send(c.subtitleImage, "setImage:", uintptr(c.list.picture(row.SubtitleImage, false, 0)))
+	send(c.subtitleImage, "setHidden:", boolArg(row.Subtitle == "" || row.Group || len(row.SubtitleImage) == 0))
 	if row.Busy && c.spinner == 0 {
 		c.spinner = autorelease(msgInitRect(send(class("NSProgressIndicator"), "alloc"), sel("initWithFrame:"), NSRect{}))
 		send(c.spinner, "setStyle:", 1)       // NSProgressIndicatorStyleSpinning
@@ -521,6 +536,15 @@ func (c *sourceCell) color(style int) {
 		}
 		send(b, "setTextColor:", uintptr(color))
 	}
+	title, muted := send(class("NSColor"), "labelColor"), send(class("NSColor"), "secondaryLabelColor")
+	if emphasized {
+		title, muted = white, msgFloatID(white, sel("colorWithAlphaComponent:"), 0.75)
+	}
+	if c.item.Group || c.item.Dimmed {
+		title = muted
+	}
+	send(c.title, "setTextColor:", uintptr(title))
+	send(c.prefix, "setTextColor:", uintptr(muted))
 	var tint id
 	switch {
 	case emphasized && (c.item.Symbol != "" || c.item.Template):
@@ -581,17 +605,43 @@ func (c *sourceCell) layout(v id) {
 		right -= 4
 	}
 	s := msgSize(c.title, sel("fittingSize"))
-	width := max(right-x, 0)
+	// The title after its prefix, which keeps its width while the title
+	// truncates, up to half the row: their texts run on as one, the
+	// padding of the labels at their ends, 2 points each, overlapping.
+	titleX := x
+	if !sendBool(c.prefix, "isHidden") {
+		const padding = 2
+		titleX += min(msgSize(c.prefix, sel("fittingSize")).Width-2*padding, max(right-x, 0)/2)
+	}
+	width := max(right-titleX, 0)
+	place := func(y float64) {
+		msgSetRect(c.prefix, sel("setFrame:"), NSRect{Origin: NSPoint{x, y}, Size: NSSize{titleX - x + 4, s.Height}})
+		msgSetRect(c.title, sel("setFrame:"), NSRect{Origin: NSPoint{titleX, y}, Size: NSSize{width, s.Height}})
+	}
 	if sendBool(c.subtitle, "isHidden") {
-		msgSetRect(c.title, sel("setFrame:"), NSRect{Origin: NSPoint{x, (h - s.Height) / 2}, Size: NSSize{width, s.Height}})
+		place((h - s.Height) / 2)
 		return
 	}
 	// The title over the subtitle, the two in the middle of the row; its
 	// bottom is at y 0, the cell not being flipped.
+	// The subtitle after its picture, the two in the middle of their line,
+	// which is as tall as the taller, a little under the title, as Mail's
+	// lines of a message. The picture starts where the title's text does,
+	// in from its label by the label's padding, and the subtitle's text 5
+	// points after it.
+	const gap, padding = 2, 2
 	sub := msgSize(c.subtitle, sel("fittingSize"))
-	bottom := (h - s.Height - sub.Height) / 2
-	msgSetRect(c.subtitle, sel("setFrame:"), NSRect{Origin: NSPoint{x, bottom}, Size: NSSize{width, sub.Height}})
-	msgSetRect(c.title, sel("setFrame:"), NSRect{Origin: NSPoint{x, bottom + sub.Height}, Size: NSSize{width, s.Height}})
+	line, subX := sub.Height, x
+	if !sendBool(c.subtitleImage, "isHidden") {
+		size := msgSize(send(c.subtitleImage, "image"), sel("size"))
+		line = max(line, size.Height)
+		bottom := (h - s.Height - gap - line) / 2
+		msgSetRect(c.subtitleImage, sel("setFrame:"), NSRect{Origin: NSPoint{x + padding, bottom + (line-size.Height)/2}, Size: size})
+		subX = x + padding + size.Width + 5 - padding
+	}
+	bottom := (h - s.Height - gap - line) / 2
+	msgSetRect(c.subtitle, sel("setFrame:"), NSRect{Origin: NSPoint{subX, bottom + (line-sub.Height)/2}, Size: NSSize{max(right-subX, 0), sub.Height}})
+	place(bottom + line + gap)
 }
 
 // rowsEnd notes where the cell v, of a row that is not a heading, ends in
@@ -620,20 +670,35 @@ func (l *sourceList) image(row platform.SourceListItem) id {
 	if row.Symbol != "" {
 		return symbol(row.Symbol, "")
 	}
-	if len(row.Image) == 0 {
+	return l.picture(row.Image, row.Template, size)
+}
+
+// picture returns the image of the PNG data, size DIPs square, or as tall
+// as the rows' icons and as wide as its proportions make it for 0: nil
+// for none. The list keeps it for the rows showing it again.
+func (l *sourceList) picture(data []byte, template bool, size float64) id {
+	if len(data) == 0 {
 		return 0
 	}
-	key := unsafe.SliceData(row.Image)
+	key := unsafe.SliceData(data)
 	img := sourceImages[key]
 	if img == 0 {
-		img = send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(row.Image)))
+		img = send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(data)))
 		if img == 0 {
 			return 0
 		}
-		send(img, "setTemplate:", boolArg(row.Template))
+		send(img, "setTemplate:", boolArg(template))
 		sourceImages[key] = img // kept, as the rows show it again
 	}
-	msgSetSize(img, sel("setSize:"), NSSize{size, size})
+	w, h := size, size
+	if size == 0 {
+		_, h = l.rowSize()
+		w = h
+		if cfg, err := png.DecodeConfig(bytes.NewReader(data)); err == nil && cfg.Height > 0 {
+			w = h * float64(cfg.Width) / float64(cfg.Height)
+		}
+	}
+	msgSetSize(img, sel("setSize:"), NSSize{w, h})
 	return img
 }
 

@@ -47,6 +47,9 @@ type SourceListStyle struct {
 	// RowHeight is the height of all rows, in DIPs; 0 for the height of
 	// a sidebar's rows of the system's settings.
 	RowHeight float64
+	// Flat leaves the rows no room for arrows, as a list of items
+	// without children, as Mail's list of messages.
+	Flat bool
 }
 
 // SourceListHandler answers a source list's questions about its items, and
@@ -75,6 +78,9 @@ type SourceListHandler interface {
 // SourceListItem is the row of an item of a source list.
 type SourceListItem struct {
 	Title string
+	// TitlePrefix shows before the title, muted, as a commit's scope
+	// before its summary.
+	TitlePrefix string
 	// Bold shows the title bold, as a message list's subjects.
 	Bold bool
 	// Subtitle is a second line under the title, muted.
@@ -90,6 +96,9 @@ type SourceListItem struct {
 	Tint     Color
 	// ImageSize is the side of the icon, in DIPs; 0 for the row's.
 	ImageSize float64
+	// SubtitleImage is a PNG shown before the subtitle, as tall as a row's
+	// icons and as wide as its proportions make it, in its own colors.
+	SubtitleImage []byte
 	// Dimmed shows the title muted.
 	Dimmed bool
 	// Badges show after the title, at the end of the row.

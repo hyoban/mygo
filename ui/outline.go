@@ -31,7 +31,10 @@ type OutlineState[K comparable] struct {
 	// all its rows, 0 for a sidebar's of the system's settings.
 	Inset     bool
 	RowHeight float32
-	rows      []outlineRow[K]
+	// Flat leaves a SourceList's rows no room for arrows, as a list of
+	// items without children, as Mail's list of messages.
+	Flat bool
+	rows []outlineRow[K]
 	// native is what a SourceList keeps of s: the system's list, or the
 	// bitmaps of its drawn rows; choice what it chose after a frame.
 	native any
