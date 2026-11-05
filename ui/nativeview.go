@@ -2,8 +2,9 @@ package ui
 
 import "github.com/egoist/mygo/internal/platform"
 
-// nativeView is a view of the system's an element shows (SourceList,
-// NativeSearchField), as the engine places it and syncs it after a frame.
+// nativeView is a view of the system's an element shows (SourceList, and
+// the controls of NativeCheckbox, NativeSearchField and the like), as the
+// engine places it and syncs it after a frame.
 type nativeView interface {
 	native() platform.NativeView
 	sync()

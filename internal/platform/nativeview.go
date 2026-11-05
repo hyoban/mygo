@@ -17,8 +17,7 @@ type NativeView interface {
 }
 
 // NativeViewSurface is a Surface that shows views of the system's under
-// it: source lists (SourceListSurface) and search fields
-// (SearchFieldSurface).
+// it: source lists (SourceListSurface) and controls (ControlSurface).
 type NativeViewSurface interface {
 	// PlaceNativeViews shows the views of the surface where the content's
 	// last frame shows them, and hides the others.

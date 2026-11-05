@@ -66,21 +66,39 @@ func coreNativeTextField(c *context, text *string, placeholder string) *node {
 // the control, kept in the element's state: nil, nil where the window has
 // none.
 func nativeControlNode(c *context, kind platform.ControlKind) (*node, *nativeControl) {
-	rt := c.rt
-	surface, _ := rt.host.nativeViews().(platform.ControlSurface)
+	surface := controlSurface(c)
 	if surface == nil {
 		return nil, nil
 	}
 	e := c.newElement(kindBox)
 	b := e.st.control
-	if b == nil || b.rt != rt || b.kind != kind {
+	if b == nil || b.rt != c.rt || b.kind != kind {
 		if b != nil {
 			b.n.Close()
 		}
-		b = &nativeControl{rt: rt, kind: kind}
-		b.n = surface.NewControl(kind, b)
+		b = newNativeControl(c.rt, surface, kind)
 		e.st.control = b
 	}
+	b.show(e)
+	return e, b
+}
+
+// controlSurface returns the window's surface showing controls of the
+// system's, nil for none.
+func controlSurface(c *context) platform.ControlSurface {
+	s, _ := c.rt.host.nativeViews().(platform.ControlSurface)
+	return s
+}
+
+func newNativeControl(rt *engine, surface platform.ControlSurface, kind platform.ControlKind) *nativeControl {
+	b := &nativeControl{rt: rt, kind: kind}
+	b.n = surface.NewControl(kind, b)
+	return b
+}
+
+// show makes e the element showing the control, changed if the user
+// changed the value since the last frame.
+func (b *nativeControl) show(e *node) {
 	if b.changed {
 		b.changed = false
 		e.st.markChanged()
@@ -88,14 +106,14 @@ func nativeControlNode(c *context, kind platform.ControlKind) (*node, *nativeCon
 	e.native = b
 	e.flags |= flagFocusable | flagOwnRing
 	b.id = e.id
-	if !containsView(rt.lists, b) {
-		rt.lists = append(rt.lists, b)
+	if !containsView(b.rt.lists, b) {
+		b.rt.lists = append(b.rt.lists, b)
 	}
-	return e, b
 }
 
 // nativeControl is the system's control of a NativeCheckbox,
-// NativePopUpButton or NativeTextField, and its handler.
+// NativePopUpButton, NativeTextField or NativeSearchField, and its
+// handler.
 type nativeControl struct {
 	rt   *engine
 	kind platform.ControlKind
@@ -105,6 +123,8 @@ type nativeControl struct {
 	selected *string
 	options  []string
 	text     *string
+	// onKey hears the keys a field passes on, nil for none.
+	onKey func(Key) bool
 	// changed tells that the user changed the value since the last frame.
 	changed bool
 	// id is the element showing the control, focused whether it had the
@@ -145,13 +165,35 @@ func (b *nativeControl) Changed() {
 		if i := b.n.Selected(); b.selected != nil && i >= 0 && i < len(b.options) {
 			*b.selected = b.options[i]
 		}
-	case platform.ControlTextField:
+	case platform.ControlTextField, platform.ControlSearchField:
 		if b.text != nil {
 			*b.text = b.n.Text()
 		}
 	}
 	b.changed = true
 	b.rt.requestFrame()
+}
+
+func (b *nativeControl) Key(key platform.Key) bool {
+	if b.onKey == nil {
+		return false
+	}
+	var k Key
+	switch key {
+	case platform.KeyDown:
+		k = KeyDown
+	case platform.KeyUp:
+		k = KeyUp
+	case platform.KeyEnter:
+		k = KeyEnter
+	case platform.KeyEscape:
+		k = KeyEscape
+	default:
+		return false
+	}
+	took := b.onKey(k)
+	b.rt.requestFrame()
+	return took
 }
 
 func (b *nativeControl) TabOut(back bool) {

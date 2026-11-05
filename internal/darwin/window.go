@@ -2241,7 +2241,6 @@ func registerWindowClasses() {
 	registerClipViewClass()
 	registerEmbedClasses()
 	registerSourceListClasses()
-	registerSearchFieldClasses()
 	registerControlClasses()
 	classDef("MyGoWebView", "WKWebView", nil, append(append(webViewMethods(), contextMenuMethods()...), []objc.MethodDef{
 		method("mouseDown:", func(self id, cmd objc.SEL, ev id) {

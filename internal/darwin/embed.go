@@ -11,7 +11,7 @@ import (
 )
 
 // A view of the system's in a window of native UI (platform.NativeView:
-// a source list, a search field) sits in a clip view under the surface,
+// a source list, a control) sits in a clip view under the surface,
 // as a web view does: the surface's frames are transparent where the
 // content shows it, and its hitTest: lets the pointer through to it there.
 // Over a sidebar, the clip view is in the sidebar's material, as AppKit's

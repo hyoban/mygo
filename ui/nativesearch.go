@@ -15,7 +15,7 @@ type SearchFieldState struct {
 	// the field is empty (with text, Escape clears it). It reports
 	// whether it took the key.
 	OnKey func(key Key) bool
-	// native is the system's field, or the drawn one's state.
+	// native is the system's field.
 	native any
 }
 
@@ -31,24 +31,16 @@ type SearchFieldState struct {
 //	app.filter.OnKey = func(k ui.Key) bool { return k == ui.KeyDown && app.files.Focus(c) }
 //	ui.NativeSearchField(c, &app.filter, &app.query).FillWidth()
 func coreNativeSearchField(c *context, s *SearchFieldState, query *string) *node {
-	rt := c.rt
-	surface, _ := rt.host.nativeViews().(platform.SearchFieldSurface)
+	surface := controlSurface(c)
 	if surface == nil {
 		return drawnSearchField(c, s, query)
 	}
-	b, _ := s.native.(*searchField)
-	if b == nil || b.rt != rt {
-		b = &searchField{rt: rt, s: s}
-		b.n = surface.NewSearchField(b)
+	b, _ := s.native.(*nativeControl)
+	if b == nil || b.rt != c.rt {
+		b = newNativeControl(c.rt, surface, platform.ControlSearchField)
 		s.native = b
 	}
-	b.query = query
-	changed := b.typed != nil
-	if changed {
-		*query = *b.typed
-		b.typed = nil
-	}
-	b.n.SetText(*query)
+	b.text, b.onKey = query, s.OnKey
 	label := s.Label
 	if label == "" {
 		label = s.Placeholder
@@ -57,85 +49,15 @@ func coreNativeSearchField(c *context, s *SearchFieldState, query *string) *node
 	if placeholder == "" {
 		placeholder = c.texts().Search()
 	}
-	b.n.SetPlaceholder(placeholder, label)
+	b.n.SetText(*query, placeholder)
+	b.n.SetLabel(label)
 	e := c.newElement(kindBox)
-	e.native = b
-	e.height = px(float32(b.n.Height()))
-	e.flags |= flagFocusable | flagOwnRing
+	_, h := b.n.FittingSize()
+	e.height = px(float32(h))
 	e.label = label
 	wrapElement(e).Bind(&s.Handle)
-	b.id = e.id
-	if changed {
-		e.st.markChanged()
-	}
-	if !containsView(rt.lists, b) {
-		rt.lists = append(rt.lists, b)
-	}
+	b.show(e)
 	return e
-}
-
-// searchField is the system's field of a NativeSearchField, and its
-// handler.
-type searchField struct {
-	rt    *engine
-	s     *SearchFieldState
-	n     platform.SearchField
-	query *string
-	// typed is what the user typed since the last frame, nil for none.
-	typed *string
-	// id is the element showing the field, focused whether it had the
-	// focus after the last frame.
-	id      uint64
-	focused bool
-}
-
-func (b *searchField) native() platform.NativeView { return b.n }
-
-// sync gives the field the keyboard where the element took the focus.
-func (b *searchField) sync() {
-	focused := b.rt.focused == b.id
-	if focused && !b.focused {
-		b.n.Focus()
-	}
-	b.focused = focused
-}
-
-func (b *searchField) Changed(text string) {
-	b.typed = &text
-	if b.query != nil {
-		*b.query = text
-	}
-	b.rt.requestFrame()
-}
-
-func (b *searchField) Key(key platform.Key) bool {
-	if b.s.OnKey == nil {
-		return false
-	}
-	var k Key
-	switch key {
-	case platform.KeyDown:
-		k = KeyDown
-	case platform.KeyUp:
-		k = KeyUp
-	case platform.KeyEnter:
-		k = KeyEnter
-	case platform.KeyEscape:
-		k = KeyEscape
-	default:
-		return false
-	}
-	took := b.s.OnKey(k)
-	b.rt.requestFrame()
-	return took
-}
-
-func (b *searchField) TabOut(back bool) {
-	rt := b.rt
-	rt.focused = b.id
-	rt.moveFocus(back)
-	b.focused = rt.focused == b.id
-	rt.requestFrame()
 }
 
 // drawnSearchField builds a NativeSearchField of MyGo's own where the

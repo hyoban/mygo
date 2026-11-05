@@ -11,9 +11,12 @@ import (
 )
 
 // A control (platform.ControlSurface) is an NSButton check box, an
-// NSPopUpButton or an NSTextField in a clip view under the surface
-// (embed.go), its target and the field's delegate MyGoControlTarget,
-// which tells the handler what the user changed.
+// NSPopUpButton, an NSTextField or an NSSearchField in a clip view under
+// the surface (embed.go), of MyGo's subclass of each, which tells the
+// content of a press on it and puts it in the element showing it for
+// assistive technology. Its target, and a field's delegate, is
+// MyGoControlTarget, which tells the handler what the user changed and
+// the keys a field passes on.
 type control struct {
 	embed
 	h      platform.ControlHandler
@@ -28,24 +31,34 @@ var controls = map[id]*control{} // by view and by target
 
 const nsButtonTypeSwitch = 3
 
+// controlClasses are MyGo's subclasses of the controls, by kind.
+var controlClasses = [...]struct{ name, super string }{
+	platform.ControlCheckbox:    {"MyGoCheckbox", "NSButton"},
+	platform.ControlPopUp:       {"MyGoPopUpButton", "NSPopUpButton"},
+	platform.ControlTextField:   {"MyGoTextField", "NSTextField"},
+	platform.ControlSearchField: {"MyGoSearchField", "NSSearchField"},
+}
+
 func (s *surface) NewControl(kind platform.ControlKind, h platform.ControlHandler) platform.Control {
 	c := &control{h: h, kind: kind}
 	withPool(func() {
 		s.newEmbed(c)
 		c.target = alloc("MyGoControlTarget")
 		frame := NSRect{Size: NSSize{Width: 100, Height: 22}}
+		c.view = msgInitRect(send(class(controlClasses[kind].name), "alloc"), sel("initWithFrame:"), frame)
 		switch kind {
 		case platform.ControlCheckbox:
-			c.view = msgInitRect(send(class("NSButton"), "alloc"), sel("initWithFrame:"), frame)
 			send(c.view, "setButtonType:", nsButtonTypeSwitch)
 			send(c.view, "setTitle:", uintptr(nsString("")))
-		case platform.ControlPopUp:
-			c.view = msgInitRect(send(class("NSPopUpButton"), "alloc"), sel("initWithFrame:"), frame)
 		case platform.ControlTextField:
-			c.view = msgInitRect(send(class("NSTextField"), "alloc"), sel("initWithFrame:"), frame)
-			send(c.view, "setDelegate:", uintptr(c.target))
 			send(c.view, "setUsesSingleLineMode:", 1)
 			send(send(c.view, "cell"), "setScrollable:", 1)
+		case platform.ControlSearchField:
+			send(c.view, "setSendsSearchStringImmediately:", 1)
+			send(c.view, "setSendsWholeSearchString:", 0)
+		}
+		if kind.IsField() {
+			send(c.view, "setDelegate:", uintptr(c.target))
 		}
 		send(c.view, "setTarget:", uintptr(c.target))
 		send(c.view, "setAction:", uintptr(sel("mygoControlChanged:")))
@@ -56,9 +69,14 @@ func (s *surface) NewControl(kind platform.ControlKind, h platform.ControlHandle
 	return c
 }
 
-// placed fills frame with the control, which the content sizes as the
-// control fits (FittingSize) unless given a width.
+// placed puts the control in frame, at its own height in the middle of a
+// frame higher than that. The content sizes it as it fits (FittingSize)
+// unless given a size.
 func (c *control) placed(frame NSRect) {
+	if h := msgSize(c.view, sel("fittingSize")).Height; h < frame.Size.Height {
+		frame.Origin.Y += (frame.Size.Height - h) / 2
+		frame.Size.Height = h
+	}
 	if msgRect(c.view, sel("frame")) != frame {
 		msgSetRect(c.view, sel("setFrame:"), frame)
 	}
@@ -136,7 +154,11 @@ func (c *control) SetLabel(label string) {
 	if c.closed {
 		return
 	}
-	withPool(func() { send(c.view, "setAccessibilityLabel:", uintptr(nsString(label))) })
+	withPool(func() {
+		if goString(send(c.view, "accessibilityLabel")) != label {
+			send(c.view, "setAccessibilityLabel:", uintptr(nsString(label)))
+		}
+	})
 }
 
 func (c *control) Checked() bool { return !c.closed && sendInt(c.view, "state") == 1 }
@@ -167,7 +189,7 @@ func (c *control) Close() {
 	}
 	withPool(func() {
 		c.closeEmbed(c)
-		if c.kind == platform.ControlTextField {
+		if c.kind.IsField() {
 			send(c.view, "setDelegate:", 0)
 		}
 		send(c.view, "setTarget:", 0)
@@ -185,8 +207,37 @@ func registerControlClasses() {
 		}
 		return nil
 	}
-	classDef("MyGoControlTarget", "NSObject", []string{"NSTextFieldDelegate"}, []objc.MethodDef{
+	for kind, cl := range controlClasses {
+		methods := []objc.MethodDef{
+			// A press on the control tells the content, as one on a web
+			// view does, which closes its popups, say.
+			method("mouseDown:", func(self id, cmd objc.SEL, ev id) {
+				if c := control(self); c != nil {
+					c.pressed(ev, 0)
+				}
+				sendSuper(self, cl.name, cmd, uintptr(ev))
+			}),
+			// Assistive technology finds the control inside the element
+			// showing it (access.go), not in its clip view.
+			method("accessibilityParent", func(self id, cmd objc.SEL) id {
+				if c := control(self); c != nil && c.accessParent != 0 {
+					return c.accessParent
+				}
+				return sendSuper(self, cl.name, cmd)
+			}),
+		}
+		if platform.ControlKind(kind) == platform.ControlSearchField {
+			// A click on a search field of a window in the background
+			// goes to it, as one on a sidebar's list does.
+			methods = append(methods, method("acceptsFirstMouse:", func(self id, _ objc.SEL, ev id) bool { return true }))
+		}
+		classDef(cl.name, cl.super, nil, methods)
+	}
+	classDef("MyGoControlTarget", "NSObject", []string{"NSSearchFieldDelegate"}, []objc.MethodDef{
 		method("mygoControlChanged:", func(self id, _ objc.SEL, sender id) {
+			// A text field tells each edit as controlTextDidChange:, and
+			// its action only as it ends editing; a search field's action
+			// tells its button clearing it too.
 			if c := control(self); c != nil && c.kind != platform.ControlTextField {
 				c.h.Changed()
 			}
@@ -196,7 +247,8 @@ func registerControlClasses() {
 				c.h.Changed()
 			}
 		}),
-		// Tab leaves a field for the content, which moves the keyboard on.
+		// The keys a field has no use for go to the content, as moving to
+		// the list a search field filters; Tab leaves the field for it.
 		method("control:textView:doCommandBySelector:", func(self id, _ objc.SEL, ctl, view id, command objc.SEL) bool {
 			c := control(self)
 			if c == nil {
@@ -207,6 +259,19 @@ func registerControlClasses() {
 				c.leave()
 				c.h.TabOut(command == sel("insertBacktab:"))
 				return true
+			case sel("moveDown:"):
+				return c.h.Key(platform.KeyDown)
+			case sel("moveUp:"):
+				return c.h.Key(platform.KeyUp)
+			case sel("insertNewline:"):
+				return c.h.Key(platform.KeyEnter)
+			case sel("cancelOperation:"):
+				if c.kind == platform.ControlSearchField && goString(send(c.view, "stringValue")) != "" {
+					send(c.view, "setStringValue:", uintptr(nsString("")))
+					c.h.Changed()
+					return true
+				}
+				return c.h.Key(platform.KeyEscape)
 			}
 			return false
 		}),

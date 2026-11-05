@@ -38,10 +38,13 @@ type headless struct {
 	// nativeTips has Tooltip's tips shown as the system's, the last one
 	// given tipText at tipRect.
 	nativeTips bool
-	tipText    string
-	tipRect    Rect
-	ime        platform.TextInputState
-	opened     []string
+	// native shows the system's views, as a test's fake does; nil for
+	// none, as headless windows have.
+	native  platform.NativeViewSurface
+	tipText string
+	tipRect Rect
+	ime     platform.TextInputState
+	opened  []string
 	// escapes counts the Escapes nothing handled.
 	escapes int
 	openErr error
@@ -210,7 +213,7 @@ func (h *headless) keepAccess(t *platform.AccessTree) {
 func (h *headless) popupMenu(m *platform.Menu, x, y float32, chosen func(int)) {
 	h.menu, h.menuAt, h.chosen = m, [2]float32{x, y}, chosen
 }
-func (h *headless) nativeViews() platform.NativeViewSurface { return nil }
+func (h *headless) nativeViews() platform.NativeViewSurface { return h.native }
 
 func (h *headless) placeWebViews(views []placedWebView) {
 	h.webViews = append(h.webViews[:0], views...)

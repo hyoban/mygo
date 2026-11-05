@@ -1,8 +1,8 @@
 package platform
 
 // ControlSurface is a Surface that shows controls of the system's:
-// AppKit's check boxes (NSButton), pop-up buttons (NSPopUpButton) and
-// text fields (NSTextField) on macOS.
+// AppKit's check boxes (NSButton), pop-up buttons (NSPopUpButton), text
+// fields (NSTextField) and search fields (NSSearchField) on macOS.
 type ControlSurface interface {
 	NativeViewSurface
 	// NewControl creates a control of the kind under the surface, hidden
@@ -23,7 +23,15 @@ const (
 	// ControlTextField is a field of text, which the user edits
 	// (SetText).
 	ControlTextField
+	// ControlSearchField is a field of text to search for, with the
+	// system's magnifying glass and button clearing it (SetText). Escape
+	// clears it while it has text.
+	ControlSearchField
 )
+
+// IsField reports whether the kind is a field of text, which takes the
+// keyboard: ControlTextField or ControlSearchField.
+func (k ControlKind) IsField() bool { return k == ControlTextField || k == ControlSearchField }
 
 // Control is a control of the system's, of one of the kinds.
 type Control interface {
@@ -45,6 +53,8 @@ type Control interface {
 	Selected() int
 	Text() string
 	// FittingSize is the control's own size, in DIPs, for its content.
+	// The control shows at its own height in the middle of a frame
+	// higher than that.
 	FittingSize() (width, height float64)
 }
 
@@ -53,6 +63,10 @@ type Control interface {
 type ControlHandler interface {
 	// Changed tells that the user changed the control's value.
 	Changed()
+	// Key tells that the user pressed, in a field, one of the keys a
+	// field passes on: KeyDown, KeyUp, KeyEnter, and KeyEscape (where a
+	// search field is empty). It reports whether the content took it.
+	Key(key Key) bool
 	// TabOut tells that Tab moved the keyboard out of a field, or
 	// Shift+Tab when back: the surface has it again.
 	TabOut(back bool)
