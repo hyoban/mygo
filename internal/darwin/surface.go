@@ -7,6 +7,7 @@ import (
 	"image"
 	pngenc "image/png"
 	"runtime"
+	"slices"
 	"structs"
 	"sync"
 	"time"
@@ -152,21 +153,26 @@ type surface struct {
 	due         bool
 	// deferred tells that the content left the last paced frame to draw
 	// later (FrameNow): the link keeps running meanwhile. soon tells that
-	// a frame waits for the backend's queue (drawSoon), and drawn that the
-	// content's first frame reached the surface (FirstFrame).
+	// a frame waits for the backend's queue (drawSoon), asked for after
+	// the frame that began at soonAfter, and drawn that the content's
+	// first frame reached the surface (FirstFrame).
 	deferred  bool
 	timing    bool
 	soon      bool
 	drawn     bool
 	resized   bool
 	lastFrame time.Time
+	soonAfter time.Time
 	framePass uint64
 	cursor    platform.Cursor
 	inside    bool
+	// secondaryClick is set while the primary button is down for a secondary
+	// click: a Control-click, or a press of the secondary button that an event
+	// tap posted again as a primary one.
+	secondaryClick bool
 	// tip is the string AppKit shows as the tooltip of the element under
 	// the pointer (SetTooltip), which it does not keep itself.
-	tip       id
-	ctrlClick bool // the primary button is down for a Control-click
+	tip id
 
 	// input is the state of the text input with the keyboard; marked is
 	// the input method's composition and markedSel its selection in it.
@@ -174,6 +180,9 @@ type surface struct {
 	marked    string
 	markedSel nsRange
 	keyDown   bool // in interpretKeyEvents: text typed with the key
+	// refused: the content left the composition set in
+	// interpretKeyEvents, given up once it returns.
+	refused bool
 
 	// Accessibility: whether the content describes its frames, the last
 	// tree, the elements of its nodes and those at the top (an NSArray).
@@ -187,6 +196,10 @@ type surface struct {
 	// placed are where the content shows the window's web views, under
 	// it (webview.go).
 	placed []platform.WebViewPlacement
+	// glass are the system's glass views by element, under the content
+	// and above the web views; glassShown is their order, bottom to top.
+	glass      map[uint64]id
+	glassShown []id
 	// embeds are the views of the system's under the surface (embed.go),
 	// and placedViews where the content shows them.
 	embeds      []embedder
@@ -225,11 +238,106 @@ func (s *surface) destroy() {
 		s.link = 0
 	}
 	s.destroyAccess()
+	for _, v := range s.glass {
+		send(v, "removeFromSuperview")
+		release(v)
+	}
+	s.glass = nil
 	s.SetTooltip("", platform.RectF{})
 	send(s.view, "removeTrackingArea:", uintptr(s.tracking))
 	release(s.tracking)
 	delete(s.w.b.bySurface, s.view)
 	release(s.view)
+}
+
+var (
+	nativeGlassOnce sync.Once
+	nativeGlassOK   bool
+)
+
+// NativeGlassSupported reports whether the system has Liquid Glass.
+func (s *surface) NativeGlassSupported() bool {
+	nativeGlassOnce.Do(func() { nativeGlassOK = hasClass("NSGlassEffectView") })
+	return nativeGlassOK
+}
+
+// PlaceGlass shows the system's glass where the content shows it: under
+// the surface, above the web views, so that the content paints its
+// children and border over it.
+func (s *surface) PlaceGlass(places []platform.GlassPlacement) {
+	host := s.w
+	if host.closed {
+		return
+	}
+	height := msgRect(host.view, sel("bounds")).Size.Height
+	if s.glass == nil {
+		s.glass = map[uint64]id{}
+	}
+	shown := make([]id, 0, len(places))
+	withPool(func() {
+		for _, p := range places {
+			if p.Clip.W <= 0 || p.Clip.H <= 0 {
+				continue
+			}
+			v := s.glass[p.ID]
+			if v == 0 {
+				v = msgInitRect(send(class("NSGlassEffectView"), "alloc"), sel("initWithFrame:"), NSRect{})
+				s.glass[p.ID] = v
+			}
+			f := p.Frame
+			msgSetRect(v, sel("setFrame:"), NSRect{Origin: NSPoint{f.X, height - f.Y - f.H}, Size: NSSize{f.W, f.H}})
+			send(v, "setStyle:", uintptr(p.Style))
+			msgSetFloat(v, sel("setCornerRadius:"), p.CornerRadius)
+			if p.Tint == nil {
+				send(v, "setTintColor:", 0)
+			} else {
+				send(v, "setTintColor:", uintptr(nsColor(*p.Tint)))
+			}
+			send(v, "setHidden:", 0)
+			shown = append(shown, v)
+		}
+		for id, v := range s.glass {
+			if !slices.Contains(shown, v) {
+				send(v, "removeFromSuperview")
+				release(v)
+				delete(s.glass, id)
+			}
+		}
+		s.glassShown = append(s.glassShown[:0], shown...)
+		s.stackGlass(shown, false)
+	})
+}
+
+// stackGlass puts the glass views shown in the order the content painted
+// them, under the surface and above the web views, unless they are.
+func (s *surface) stackGlass(shown []id, force bool) {
+	if len(shown) == 0 {
+		return
+	}
+	if !force {
+		subviews := send(s.w.view, "subviews")
+		n := sendInt(subviews, "count")
+		at := 0
+		for i := range n {
+			v := send(subviews, "objectAtIndex:", uintptr(i))
+			if slices.Contains(shown, v) {
+				if at >= len(shown) || v != shown[at] {
+					at = -1
+					break
+				}
+				at++
+			}
+		}
+		if at == len(shown) {
+			return
+		}
+	}
+	for _, v := range shown {
+		retain(v)
+		send(v, "removeFromSuperview")
+		send(s.w.view, "addSubview:positioned:relativeTo:", uintptr(v), nsWindowBelow, uintptr(s.view))
+		release(v)
+	}
 }
 
 // Surface returns the surface of a window created with
@@ -322,16 +430,23 @@ var _ platform.FirstFrameSurface = (*surface)(nil)
 // shows, and runModal gives up, or the sheet never ends (#883). Only
 // frames AppKit asks for, as a resize's, which must draw with the
 // window's change, draw there (updateLayer).
+//
+// A frame drawn while one waits, as AppKit's display of the view draws
+// the first frame of a window ordered in, drew what that one would, which
+// then draws nothing; one asked for after it, as once the window shows
+// (SurfaceShown), still draws: the frame waiting draws it, rather than
+// none, which would stop what moves for good.
 func (s *surface) drawSoon() {
+	s.soonAfter = s.lastFrame
 	if s.soon {
 		return
 	}
 	s.soon = true
-	last := s.lastFrame
 	s.w.b.post(func() {
 		s.soon = false
-		// A frame drawn since, as a resize's, drew what this one would.
-		if s.w.b.surfaceOf(s.view) != s || s.lastFrame != last {
+		// A frame drawn since the last ask, as a resize's, drew what
+		// this one would.
+		if s.w.b.surfaceOf(s.view) != s || s.lastFrame != s.soonAfter {
 			return
 		}
 		s.frameNow(false)
@@ -387,14 +502,20 @@ func (s *surface) frameNow(paced bool) {
 // does the frames that change it: the frame drawn last then takes a
 // drawable until the transaction commits.
 func (s *surface) presentsWithTransaction() bool {
+	l := s.metalLayer()
+	return l != 0 && sendBool(l, "presentsWithTransaction")
+}
+
+// metalLayer returns the GPU renderer's CAMetalLayer, or nil without one.
+func (s *surface) metalLayer() id {
 	sublayers := send(send(s.view, "layer"), "sublayers")
 	metalLayer := uintptr(class("CAMetalLayer"))
 	for i := range sendInt(sublayers, "count") {
 		if l := send(sublayers, "objectAtIndex:", uintptr(i)); sendBool(l, "isKindOfClass:", metalLayer) {
-			return sendBool(l, "presentsWithTransaction")
+			return l
 		}
 	}
-	return false
+	return 0
 }
 
 // Occluded reports whether nothing of the window shows on screen: hidden,
@@ -581,17 +702,14 @@ func (s *surface) SetTooltip(text string, r platform.RectF) {
 
 func (s *surface) SetTextInput(t platform.TextInputState) {
 	if s.input.Client != t.Client && s.input.Active {
-		s.marked = ""
-		send(send(s.view, "inputContext"), "discardMarkedText")
+		s.discardComposition()
 	}
 	if s.input.Active && t.Active && t.NoInputMethod && !s.input.NoInputMethod {
 		// Input methods turned off give up what they composed.
-		s.marked = ""
-		send(send(s.view, "inputContext"), "discardMarkedText")
+		s.discardComposition()
 	}
 	if s.input.Active && !t.Active && s.marked != "" {
-		s.marked = ""
-		send(send(s.view, "inputContext"), "discardMarkedText")
+		s.discardComposition()
 	}
 	moved := t.Active != s.input.Active || t.Caret != s.input.Caret
 	s.input = t
@@ -621,6 +739,22 @@ func (s *surface) send(ev platform.SurfaceEvent) bool {
 		return false
 	}
 	return s.w.h.SurfaceEvent(ev)
+}
+
+func scrollWheel(s *surface, ev id) {
+	x, y := s.location(ev)
+	dx, dy := msgFloat(ev, sel("scrollingDeltaX")), msgFloat(ev, sel("scrollingDeltaY"))
+	precise := sendBool(ev, "hasPreciseScrollingDeltas")
+	// NSEventPhase: the fingers' gesture, then the momentum's.
+	const phaseEnded, phaseCancelled = 8, 16
+	phase, momentumPhase := sendInt(ev, "phase"), sendInt(ev, "momentumPhase")
+	momentum := momentumPhase != 0
+	ended := (phase|momentumPhase)&(phaseEnded|phaseCancelled) != 0
+	if !precise {
+		// A mouse wheel scrolls by lines: 40 DIPs, as in browsers.
+		dx, dy = dx*40, dy*40
+	}
+	s.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: x, Y: y, DX: -dx, DY: -dy, Precise: precise, Momentum: momentum, ScrollEnded: ended, Mods: eventMods(ev)})
 }
 
 func eventMods(ev id) platform.Modifiers {
@@ -827,10 +961,13 @@ func registerSurfaceClass() {
 				}
 				btn = min(n, 2)
 			case button == 0 && kind == platform.PointerDown:
-				// A Control-click is a secondary click, until its release.
-				s.ctrlClick = eventMods(ev)&platform.ModCtrl != 0
+				// A Control-click is a secondary click, until its release, as
+				// is a press that keeps the secondary button's number: data loss
+				// prevention agents tap the secondary button's events and post
+				// them again as the primary button's.
+				s.secondaryClick = eventMods(ev)&platform.ModCtrl != 0 || sendInt(ev, "buttonNumber") == 1
 			}
-			if button == 0 && s.ctrlClick {
+			if button == 0 && s.secondaryClick {
 				btn = 1
 			}
 			if kind == platform.PointerDown {
@@ -844,14 +981,18 @@ func registerSurfaceClass() {
 			}
 			s.mouse(kind, ev, btn)
 			if kind == platform.PointerUp && button == 0 {
-				s.ctrlClick = false
+				s.secondaryClick = false
 			}
 		}
 	}
 	command := func(name string) objc.MethodDef {
 		return method(name+":", func(self id, _ objc.SEL, sender id) {
 			if s := b().surfaceOf(self); s != nil {
-				s.send(platform.SurfaceEvent{Kind: platform.SurfaceCommand, Text: name})
+				// The Edit menu's key, as Command+V, repeats while held:
+				// shortcuts that take the command tell (ShortcutRepeated).
+				ev := send(s.w.b.app, "currentEvent")
+				repeat := ev != 0 && sendInt(ev, "type") == 10 && sendBool(ev, "isARepeat") // NSEventTypeKeyDown
+				s.send(platform.SurfaceEvent{Kind: platform.SurfaceCommand, Text: name, Repeat: repeat})
 			}
 		})
 	}
@@ -903,19 +1044,32 @@ func registerSurfaceClass() {
 			if s == nil {
 				return
 			}
-			if s.framePass == caPass && send(self, "inLiveResize") == 0 && (!s.resized || s.presentsWithTransaction()) {
-				// AppKit displays the view again before Core Animation
-				// commits the frame drawn in this pass, as while the
-				// trackpad scrolls. The next refresh draws it: as one just
-				// drew, not at once; and after a frame presented with the
-				// transaction, the frame would wait a second for a
-				// drawable, the layer's two being taken until the commit.
-				// A frame for a new size after one presented at once, as
-				// those of the display link's ticks are, draws at once, or
-				// the layer would stretch the last one meanwhile. A window
-				// that resizes, as zooming animates it, displays the view
-				// for each of its sizes within one pass of the run loop,
-				// committing each: those frames draw at once too.
+			// AppKit displays the view again before Core Animation commits
+			// the frame drawn in this pass, as while the trackpad scrolls.
+			// The next refresh draws it: as one just drew, not at once.
+			//
+			// A frame for a new size, after one presented with the
+			// transaction, waits for the next refresh too, in whatever
+			// pass. In this pass, it would wait a second for a drawable,
+			// the layer's two being taken until the commit. In a later
+			// one, as AppKit displays the view once the window server
+			// resized the window, it is presented with the transaction
+			// too, and does not show, even tens of milliseconds after the
+			// last: the window keeps that one, stretched to its new size,
+			// and later frames, the same as the lost one, draw nothing
+			// (#1044). A window resized from its view hits it, as
+			// the frame that resizes it presents its old size with the
+			// transaction, and so does one resized right after a frame
+			// that changed the layer, as the first after an idle while.
+			// Drawn from the display link's tick, it shows.
+			//
+			// A frame for a new size after one presented at once, as
+			// those of the display link's ticks are, draws at once, or the
+			// layer would stretch the last one meanwhile. A window in a
+			// live resize, as zooming animates it, displays the view for
+			// each of its sizes within one pass of the run loop,
+			// committing each: those frames draw at once too.
+			if send(self, "inLiveResize") == 0 && (s.resized && s.presentsWithTransaction() || !s.resized && s.framePass == caPass) {
 				s.lastFrame = time.Now()
 				s.RequestFrame()
 				return
@@ -1008,19 +1162,7 @@ func registerSurfaceClass() {
 			if s == nil {
 				return
 			}
-			x, y := s.location(ev)
-			dx, dy := msgFloat(ev, sel("scrollingDeltaX")), msgFloat(ev, sel("scrollingDeltaY"))
-			precise := sendBool(ev, "hasPreciseScrollingDeltas")
-			// NSEventPhase: the fingers' gesture, then the momentum's.
-			const phaseEnded, phaseCancelled = 8, 16
-			phase, momentumPhase := sendInt(ev, "phase"), sendInt(ev, "momentumPhase")
-			momentum := momentumPhase != 0
-			ended := (phase|momentumPhase)&(phaseEnded|phaseCancelled) != 0
-			if !precise {
-				// A mouse wheel scrolls by lines: 40 DIPs, as in browsers.
-				dx, dy = dx*40, dy*40
-			}
-			s.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: x, Y: y, DX: -dx, DY: -dy, Precise: precise, Momentum: momentum, ScrollEnded: ended, Mods: eventMods(ev)})
+			scrollWheel(s, ev)
 		}),
 		method("magnifyWithEvent:", func(self id, _ objc.SEL, ev id) {
 			s := b().surfaceOf(self)
@@ -1068,6 +1210,10 @@ func registerSurfaceClass() {
 				s.keyDown = true
 				send(self, "interpretKeyEvents:", uintptr(nsArray(ev)))
 				s.keyDown = false
+				if s.refused {
+					s.refused = false
+					s.discardComposition()
+				}
 			} else if text {
 				// Input methods off: the key types the characters of the
 				// layout, as winit's keys do without them.
@@ -1092,7 +1238,16 @@ func registerSurfaceClass() {
 				s.send(platform.SurfaceEvent{Kind: platform.SurfaceCommand, Text: "pasteAndMatchStyle"})
 			}
 		}),
-		method("validateMenuItem:", func(self id, _ objc.SEL, item id) bool { return true }),
+		method("validateMenuItem:", func(self id, _ objc.SEL, item id) bool {
+			s := b().surfaceOf(self)
+			action := objc.SEL(send(item, "action"))
+			for selector, name := range contextSelectors {
+				if action == sel(selector) {
+					return s != nil && s.send(platform.SurfaceEvent{Kind: platform.SurfaceCommandEnabled, Text: name})
+				}
+			}
+			return true
+		}),
 
 		// NSTextInputClient
 		method("hasMarkedText", func(self id, _ objc.SEL) bool {

@@ -87,7 +87,7 @@ func (e *node) buildMenu(button, drawn bool, build func(m *Menu)) {
 		if e.disabled() {
 			break
 		}
-		if d := mr.drawn; drawn && mr.below && d != nil && d.id == e.id && d.below {
+		if d := mr.drawn; drawn && mr.below && d != nil && d.id == e.id && d.menu.below {
 			// The button pressed again while its menu shows.
 			mr.drawn = nil
 			break
@@ -176,8 +176,9 @@ func (m *Menu) add(label string, typ platform.MenuItemType) *MenuItem {
 // EditItems adds the editing items of the text the menu opened on, as its
 // menu has them without ContextMenu: Copy and Select All for selectable
 // text, the platform's text field items for a text input. Choosing one does
-// its command on the text, without reaching the menu's function. It adds
-// nothing to a menu that opened on no text.
+// its command on the text, without reaching the menu's function. An element
+// within text, as a link in a paragraph, opens its menu on that text. It
+// adds nothing to a menu that opened on no text.
 func (m *Menu) EditItems() {
 	if m.text == nil || m.text.editor == nil {
 		return
@@ -286,7 +287,7 @@ type menuState struct {
 	// the menu key or Shift+F10, or a menu button's for its keys; below
 	// when a menu button's opens below the button itself, rather than
 	// from a toolbar's overflow menu.
-	button, chosenButton, key, below bool
+	button, chosenButton, key, last, below bool
 	// release is the element whose menu opens when the secondary button
 	// goes up, as on Windows, on the text releaseText.
 	release, releaseText uint64
@@ -347,12 +348,23 @@ func (rt *engine) menuTarget(chain []uint64) *state {
 	return nil
 }
 
+// textAround returns the selectable text or text input around s in chain,
+// whose context menu s replaces, as a paragraph's for a link in it, or nil.
+func (rt *engine) textAround(chain []uint64, s *state) *state {
+	for _, id := range chain[slices.Index(chain, s.id)+1:] {
+		if t := rt.states[id]; t != nil && t.flags&(flagEditable|flagSelectable) != 0 && t.editor != nil {
+			return t
+		}
+	}
+	return nil
+}
+
 // askMenu has the next frame build the context menu of s, or with button
 // its menu button's, to show at (x, y): where it was clicked, or below the
 // focus.
 func (rt *engine) askMenu(s *state, x, y float32, button bool) {
 	mr := &rt.menu
-	mr.asked, mr.x, mr.y, mr.button, mr.text, mr.key, mr.below = s.id, x, y, button, 0, false, false
+	mr.asked, mr.x, mr.y, mr.button, mr.text, mr.key, mr.last, mr.below = s.id, x, y, button, 0, false, false, false
 	// The menu takes the press: the release goes to it.
 	if rt.pressed != nil {
 		rt.pressed.pressed = false
@@ -399,6 +411,8 @@ func (rt *engine) menuPress(chain []uint64, x, y float32) bool {
 	if s.editor != nil {
 		text = s.id
 		s = rt.textMenu(s)
+	} else if t := rt.textAround(chain, s); t != nil {
+		text = t.id
 	}
 	if runtime.GOOS == "windows" {
 		rt.menu.release, rt.menu.releaseText = s.id, text
@@ -445,6 +459,8 @@ func (rt *engine) menuKey() bool {
 		x, y = r.X, r.Y+r.H
 		text = s.id
 		s = rt.textMenu(s)
+	} else if t := rt.textAround(rt.focusChain(), s); t != nil {
+		text = t.id
 	}
 	rt.askMenu(s, x, y, false)
 	rt.menu.text, rt.menu.key = text, true
@@ -466,6 +482,13 @@ func (rt *engine) openMenuButton(s *state, key bool) {
 	x, y := s.menuCorner()
 	rt.askMenu(s, x, y, true)
 	rt.menu.key, rt.menu.below = key, true
+}
+
+// openMenuButtonOnLast opens the menu of menu button s from the keyboard
+// on its last item that can be chosen, as the Up key does.
+func (rt *engine) openMenuButtonOnLast(s *state) {
+	rt.openMenuButton(s, true)
+	rt.menu.last = true
 }
 
 // menuCorner returns where the menu of a button goes: at its bottom left
@@ -584,26 +607,20 @@ func (rt *engine) editMenu(s *state) {
 // editCommands are the items of the editing menu of s: Copy and Select All
 // for selectable text, the platform's text field items for a text input.
 func (rt *engine) editCommands(s *state) []editItem {
-	ed := s.editor
-	a, b := ed.selection()
-	selected := a != b
-	if s.textScope != 0 && rt.selection.scope == s.textScope {
-		_, _, selected = rt.textSelectionBounds()
-	}
 	type command = editItem
 	texts := l10n.In(rt.lang)
 	var (
-		undo      = command{texts.Undo(), "undo", len(ed.undo) > 0}
-		cut       = command{texts.Cut(), "cut", selected && !ed.password}
-		copyText  = command{texts.Copy(), "copy", selected && !ed.password}
-		paste     = command{texts.Paste(), "paste", true}
-		del       = command{texts.Delete(), "delete", selected}
-		selectAll = command{texts.SelectAll(), "selectAll", ed.buf.n > 0}
+		undo      = command{texts.Undo(), "undo", rt.editCommandOn(s, "undo")}
+		cut       = command{texts.Cut(), "cut", rt.editCommandOn(s, "cut")}
+		copyText  = command{texts.Copy(), "copy", rt.editCommandOn(s, "copy")}
+		paste     = command{texts.Paste(), "paste", rt.editCommandOn(s, "paste")}
+		del       = command{texts.Delete(), "delete", rt.editCommandOn(s, "delete")}
+		selectAll = command{texts.SelectAll(), "selectAll", rt.editCommandOn(s, "selectAll")}
 		separator = command{}
 		commands  []command
 	)
 	switch {
-	case ed.readOnly:
+	case s.editor.readOnly:
 		commands = []command{copyText, separator, selectAll}
 	case runtime.GOOS == "darwin":
 		commands = []command{cut, copyText, paste, separator, selectAll}
@@ -613,6 +630,56 @@ func (rt *engine) editCommands(s *state) []editItem {
 		commands = []command{cut, copyText, paste, del, separator, selectAll}
 	}
 	return commands
+}
+
+// editCommandOn reports whether the editing command name would act on the
+// text input or selectable text s, as its editor does it.
+func (rt *engine) editCommandOn(s *state, name string) bool {
+	ed := s.editor
+	switch {
+	case s.flags&flagDisabled != 0 && (s.textScope != 0 || s.flags&flagEditable != 0),
+		ed.readOnly && name != "copy" && name != "selectAll",
+		ed.password && (name == "cut" || name == "copy"):
+		return false
+	}
+	if len(ed.queue) > 0 {
+		// The command goes behind the input the next frame applies, which
+		// changes what it acts on.
+		return true
+	}
+	a, b := ed.selection()
+	selected := a != b
+	if s.textScope != 0 && rt.selection.scope == s.textScope {
+		_, _, selected = rt.textSelectionBounds()
+	}
+	switch name {
+	case "undo":
+		return len(ed.undo) > 0
+	case "redo":
+		return len(ed.redo) > 0
+	case "cut", "copy":
+		return selected
+	case "paste", "pasteAndMatchStyle":
+		return true
+	case "delete":
+		return selected
+	case "selectAll":
+		if s.textScope != 0 {
+			// The selection holds the newlines between paragraphs too.
+			paragraphs := 0
+			for _, p := range rt.texts {
+				if p.textScope == s.textScope {
+					if p.editor.buf.n > 0 {
+						return true
+					}
+					paragraphs++
+				}
+			}
+			return paragraphs > 1
+		}
+		return ed.buf.n > 0
+	}
+	return false
 }
 
 // accelerator writes a key with modifiers as menus take it, as in

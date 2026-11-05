@@ -93,8 +93,8 @@ UI as they read other apps (see [Accessibility](accessibility.md)).
   and values that ease to their targets.
 - [Shaders](shaders.md): pixels computed on the GPU by shaders written in
   Go's syntax, with values and images the app passes them.
-- [Transitions](transitions.md): elements that move, resize and recolor
-  smoothly as the layout changes, and come and go.
+- [Transitions](transitions.md): elements that move, resize, recolor and
+  shade smoothly as the layout changes, and come and go.
 - [Motion](motion.md): springs that keep their velocity, curves, delays,
   values thrown by the pointer, keyframes, timelines that play several
   tweens on one playhead, and knowing when they are done.
@@ -149,6 +149,8 @@ UI as they read other apps (see [Accessibility](accessibility.md)).
 - [Text-input primitives](text-input-client.md): application-owned text,
   native composition and queries, and retained geometry for custom controls.
 - [Number input](number-input.md): a number in a range, typed or stepped.
+- [Decimal input](decimal-input.md): an exact decimal, as an amount of money,
+  typed or stepped, never rounded.
 - [Search field](search-field.md): a field for searching, which Escape
   clears.
 - [Combobox](combobox.md): a field choosing one of a list, which typing

@@ -4,6 +4,7 @@ package linux
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -58,6 +59,11 @@ type window struct {
 	webViews     []*window
 	host         *window
 	accessParent ptr
+	// pageScale is how much the content scales a web view's page, which
+	// WebKit zooms by over the page's own zoom, and corners the radii,
+	// in its allocation's DIPs, its drawing is cut to (webview.go).
+	pageScale float64
+	corners   [4]float64
 	// controls are the title buttons over the page of a window with a
 	// hidden title bar (titlebar.go), in an overlay with the web view.
 	controls *windowControls
@@ -411,6 +417,7 @@ func (w *window) cleanup() {
 	w.closeWebViews()
 	w.closed = true
 	delete(w.b.windows, w.id)
+	w.leaveFlyout()
 	w.b.flyouts = slices.DeleteFunc(w.b.flyouts, func(x *window) bool { return x == w })
 	delete(w.b.byWebView, w.web)
 	dropOwner(w.owner)
@@ -677,6 +684,7 @@ func (w *window) Show() {
 	if w.layer {
 		w.layerKeyboard(true)
 	}
+	w.enterFlyout()
 	w.willShow()
 	gtkWidgetShow(w.win)
 	gtkWindowPresent(w.win)
@@ -690,6 +698,7 @@ func (w *window) ShowInactive() {
 	if w.layer {
 		w.layerKeyboard(false)
 	}
+	w.enterFlyout()
 	w.willShow()
 	gtkWidgetShow(w.win)
 }
@@ -733,6 +742,7 @@ func (w *window) Hide() {
 	}
 	w.hiding = false
 	gtkWidgetHide(w.win)
+	w.leaveFlyout()
 }
 
 func (w *window) IsVisible() bool { return gtkWidgetGetVisible(w.win) && !w.hiding }
@@ -749,6 +759,7 @@ func (w *window) Focus() {
 		w.showFlyout(w.flyout.Focusable)
 		return
 	}
+	w.enterFlyout()
 	w.b.dismissFlyouts(w)
 	if w.layer {
 		w.layerKeyboard(true)
@@ -843,12 +854,13 @@ func (w *window) SetBackgroundColor(c platform.Color) {
 	}
 }
 
-func (w *window) SetOpacity(v float64)      { gtkWidgetSetOpacity(w.win, v) }
-func (w *window) Opacity() float64          { return gtkWidgetGetOpacity(w.win) }
-func (w *window) SetIgnoreMouseEvents(bool) {}
-func (w *window) SetContentProtection(bool) {}
-func (w *window) SetVibrancy(string)        {}
-func (w *window) SetActiveAppearance(bool)  {}
+func (w *window) SetOpacity(v float64)            { gtkWidgetSetOpacity(w.win, v) }
+func (w *window) Opacity() float64                { return gtkWidgetGetOpacity(w.win) }
+func (w *window) SetIgnoreMouseEvents(bool)       {}
+func (w *window) SetContentProtection(bool)       {}
+func (w *window) SetVibrancy(string)              {}
+func (w *window) SetVibrancyTint(*platform.Color) {}
+func (w *window) SetActiveAppearance(bool)        {}
 
 // SetWindowButtonsTheme does nothing: GTK's title buttons follow the
 // theme, which is the application's.
@@ -1188,8 +1200,9 @@ func (w *window) CallAsyncFunction(body string, cb func(string, error)) {
 	webkitWebViewCallAsyncJavascriptFunction(w.web, unsafe.StringData(body), len(body), 0, nil, nil, 0, cbAsyncReady, id)
 }
 
-func (w *window) SetZoom(f float64) { webkitWebViewSetZoomLevel(w.web, f) }
-func (w *window) Zoom() float64     { return webkitWebViewGetZoomLevel(w.web) }
+// SetZoom zooms the page, a web view's as the content scales it too.
+func (w *window) SetZoom(f float64) { webkitWebViewSetZoomLevel(w.web, f*cmp.Or(w.pageScale, 1)) }
+func (w *window) Zoom() float64     { return webkitWebViewGetZoomLevel(w.web) / cmp.Or(w.pageScale, 1) }
 
 func (w *window) SetUserAgent(ua string) {
 	settings := webkitWebViewGetSettings(w.web)
@@ -1597,7 +1610,7 @@ func initWindowCallbacks() {
 		if w := b().window(data); w != nil {
 			w.altAlone = false
 			w.h.Blurred()
-			if w.trayFlyout() && w.flyout.Focusable && !w.grabbingChild() {
+			if w.trayFlyout() && w.flyout.Focusable && !w.grabbingChild() && w.modalChild() == nil {
 				w.dismissFlyout(false)
 			}
 		}
@@ -1897,14 +1910,11 @@ func initWindowCallbacks() {
 		}
 		action := webkitNavigationPolicyDecisionGetNavigationAction(decision)
 		navType := webkitNavigationActionGetNavigationType(action)
-		mainFrame := true
-		if webkitNavigationPolicyDecisionGetFrameName != nil {
-			mainFrame = webkitNavigationPolicyDecisionGetFrameName(decision) == 0
-		}
+		uri := goStr(webkitURIRequestGetURI(webkitNavigationActionGetRequest(action)))
 		// WebKitNavigationType: link, form, back/forward, reload, …
 		nav := platform.Navigation{
-			URL:           goStr(webkitURIRequestGetURI(webkitNavigationActionGetRequest(action))),
-			IsMainFrame:   mainFrame,
+			URL:           uri,
+			IsMainFrame:   mainFrameNavigation(action, uri),
 			UserInitiated: webkitNavigationActionIsUserGesture(action) || navType == 0 || navType == 1,
 			Unasked:       navType == 2 || navType == 3,
 			Reload:        navType == 3,
@@ -2004,4 +2014,21 @@ func initWindowCallbacks() {
 		}
 		return 0 // CAIRO_STATUS_SUCCESS
 	})
+}
+
+// mainFrameNavigation reports whether action navigates the main frame.
+// WebKitGTK 2.56+ says so through the action's target frame. Before it,
+// a navigation tells nothing of its frame (its frame name is the target
+// of a link to a new window, NULL for the rest, iframes included), and a
+// srcdoc document only ever shows in an iframe: the HTML Standard gives
+// about:srcdoc to no main frame, and WebKit loads one into the main
+// frame as an empty page. Other iframe navigations still reach
+// OnWillNavigate there.
+func mainFrameNavigation(action ptr, uri string) bool {
+	if webkitNavigationActionGetTargetFrameInfo != nil && webkitFrameInfoIsMainFrame != nil {
+		if f := webkitNavigationActionGetTargetFrameInfo(action); f != 0 {
+			return webkitFrameInfoIsMainFrame(f)
+		}
+	}
+	return uri != "about:srcdoc"
 }

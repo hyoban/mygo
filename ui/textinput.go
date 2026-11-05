@@ -76,6 +76,28 @@ func (e *node) Placeholder(s string) *node {
 	return e
 }
 
+// PlaceholderColor sets the color of this input's placeholder for this build.
+// When unset it uses the theme's TextMuted. It does not change entered text,
+// other inputs or the theme. A transparent color hides the placeholder.
+func (e *node) PlaceholderColor(color Color) *node {
+	if ed := e.st.editor; ed != nil && e.flags&flagEditable != 0 {
+		ed.placeholderColor, ed.placeholderColorSet = color, true
+	}
+	return e
+}
+
+// CaretWidth sets this input's painted caret width in DIPs for this build.
+// It defaults to one DIP. Positive widths are rounded to device pixels,
+// at least one pixel wide; zero and negative widths hide the caret. It does
+// not change text layout, input-method candidate bounds or caret blinking.
+// Other elements are unaffected.
+func (e *node) CaretWidth(width float32) *node {
+	if ed := e.st.editor; ed != nil && e.flags&flagEditable != 0 {
+		ed.caretWidth = max(width, 0)
+	}
+	return e
+}
+
 // ReadOnly makes a text input show its text without letting the user
 // change it: the text can still be selected and copied, from the keyboard
 // too, as it takes the focus, without a caret; assistive technology reads
@@ -86,6 +108,19 @@ func (e *node) ReadOnly(on bool) *node {
 		if on {
 			ed.compose = ""
 		}
+	}
+	return e
+}
+
+// MaxLength keeps the user from making a text input's value longer than n,
+// counted as HTML's maxlength counts it, in UTF-16 code units, a newline
+// as one: text typed, pasted or committed by an input method is cut to
+// what fits at the caret, and replacing a selection takes what fits in its
+// place. A value the app sets is not cut. n <= 0 means no limit.
+// Like ReadOnly, it holds for the input that comes until the next frame.
+func (e *node) MaxLength(n int) *node {
+	if ed := e.st.editor; ed != nil && e.flags&flagEditable != 0 {
+		ed.maxLength = n
 	}
 	return e
 }
