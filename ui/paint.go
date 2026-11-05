@@ -21,6 +21,9 @@ type Painter struct {
 	clip      Rect
 	transform scene.Affine
 	inline    *node
+	// drawn is the element whose Draw or DrawOver callback paints, whose
+	// text color TextColor gives.
+	drawn *node
 	// theme is that of the innermost Themed around the element painting
 	// (Theme), nil outside any.
 	theme *Theme

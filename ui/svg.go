@@ -139,6 +139,22 @@ func coreIcon(c *context, s *SVG) *node {
 // Icon draws the shapes of an SVG fitted in r, in color c.
 func (p *Painter) Icon(s *SVG, r Rect, c Color) { p.drawIcon(s, r, c, 0) }
 
+// TextColor returns the color of the text of the element whose Draw or
+// DrawOver callback paints, as it takes it from its ancestors (TextColor),
+// in which an Icon draws: for drawing of your own to follow a button's
+// colors as it is hovered, pressed or disabled. Outside a callback, it is
+// the theme's Text.
+func (p *Painter) TextColor() Color {
+	if p.drawn == nil {
+		return p.Theme().Text
+	}
+	c := p.drawn.resolvedText().color
+	if p.drawn.gray {
+		c = c.gray()
+	}
+	return c
+}
+
 // Rotate rotates an element clockwise around its transform origin, which
 // changes no layout sizes. An Icon keeps turning its SVG artwork around its
 // center, as a spinner does:

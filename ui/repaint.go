@@ -40,6 +40,9 @@ func (p *Painter) draw(e *node, box Rect, after bool) {
 	if after {
 		fn = e.paintAfterFn
 	}
+	prev := p.drawn
+	p.drawn = e
+	defer func() { p.drawn = prev }()
 	if p.drawing || p.s != &p.rt.scene {
 		// Into a layer or a canvas, painted whole.
 		fn(p, box)
@@ -104,6 +107,7 @@ func (rt *engine) repaintParts() bool {
 		p := &rt.painter
 		p.under = append(rt.under[:0], pt.under...)
 		p.holes = append(rt.holes[:0], pt.holes...)
+		p.drawn = pt.e
 		fn := pt.e.paintFn
 		if pt.after {
 			fn = pt.e.paintAfterFn

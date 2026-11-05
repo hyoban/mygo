@@ -47,3 +47,24 @@ func TestSymbolFallback(t *testing.T) {
 		t.Errorf("the fallback's middle is %v, want red", px)
 	}
 }
+
+// TestSymbolTextColor checks that a symbol without a Color draws in the
+// color of the text around it, as an Icon does.
+func TestSymbolTextColor(t *testing.T) {
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Fill().Background(ui.RGB(255, 255, 255)).TextColor(ui.RGB(0, 0, 255)).Children(func() {
+			Symbol(c, "no.such.symbol").Size(20).Fallback(box)
+		})
+	}, 40, 40)
+	tt.Frame()
+	r, ok := tt.Find("no.such.symbol")
+	if !ok {
+		t.Fatal("no.such.symbol not found")
+	}
+	img := tt.Image()
+	s := img.Rect.Dx() / 40
+	px := img.RGBAAt(int(r.X+r.W/2)*s, int(r.Y+r.H/2)*s)
+	if px.B < 200 || px.R > 60 || px.G > 60 {
+		t.Errorf("the fallback's middle is %v, want the text's blue", px)
+	}
+}

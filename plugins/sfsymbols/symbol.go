@@ -19,6 +19,7 @@ type SymbolElement struct {
 type symbol struct {
 	name     string
 	color    ui.Color
+	colorSet bool
 	weight   Weight
 	fill     bool
 	natural  bool
@@ -26,7 +27,9 @@ type symbol struct {
 }
 
 // Symbol shows the SF Symbol named name, as SwiftUI's
-// Image(systemName:): at the theme's font size and in its text color,
+// Image(systemName:): at the theme's font size and in the color of the
+// text around it, as an Icon, following a button's as it is hovered,
+// pressed or disabled,
 // drawn sharp at the display's scale, and named for assistive technology.
 //
 //	sfsymbols.Symbol(c, "gearshape")
@@ -37,7 +40,7 @@ type symbol struct {
 // without it, it draws its Fallback, or nothing, at the same size.
 func Symbol(c *ui.Context, name string) SymbolElement {
 	t := c.Theme()
-	s := &symbol{name: name, color: t.Text}
+	s := &symbol{name: name}
 	size := t.FontSize
 	if size <= 0 {
 		size = 13
@@ -53,11 +56,11 @@ func (e SymbolElement) Size(size float32) SymbolElement {
 	return e
 }
 
-// Color draws the symbol in col rather than the theme's text color, as
-// SwiftUI's foregroundStyle.
+// Color draws the symbol in col rather than the color of the text
+// around it, as SwiftUI's foregroundStyle.
 func (e SymbolElement) Color(col ui.Color) SymbolElement {
 	if e.s != nil {
-		e.s.color = col
+		e.s.color, e.s.colorSet = col, true
 	}
 	return e
 }
@@ -110,17 +113,21 @@ func (s *symbol) paint(p *ui.Painter, r ui.Rect) {
 	}
 	px := int(math.Ceil(float64(side * scale)))
 	o := Options{Natural: s.natural, Weight: s.weight}
+	col := s.color
+	if !s.colorSet {
+		col = p.TextColor()
+	}
 	if s.fill {
-		if src, ok := Image(s.name+".fill", px, s.color, o); ok {
+		if src, ok := Image(s.name+".fill", px, col, o); ok {
 			p.Image(src, box, ui.Contain)
 			return
 		}
 	}
-	if src, ok := Image(s.name, px, s.color, o); ok {
+	if src, ok := Image(s.name, px, col, o); ok {
 		p.Image(src, box, ui.Contain)
 		return
 	}
 	if s.fallback != nil {
-		p.Icon(s.fallback, box, s.color)
+		p.Icon(s.fallback, box, col)
 	}
 }
