@@ -181,7 +181,7 @@ const (
 	// state while the page is in the history, shown or not.
 	flagPage
 	// flagFocusTarget marks an element the focus goes to but Tab does not
-	// stop at, as a Router's page.
+	// stop at, as a Router's page, or an element of TabStop(false).
 	flagFocusTarget
 	// flagDividers marks an element drawing lines between its children,
 	// listed in Context.dividers.
@@ -230,6 +230,9 @@ type textStyle struct {
 	background Color
 	// selection is the highlight of selected text, the theme's when unset.
 	selection Color
+	// caret is the color of the insertion caret, the theme's accent when
+	// unset.
+	caret Color
 	// strokeWidth and strokeColor stroke the outlines of the glyphs
 	// under their fill (TextStroke).
 	strokeWidth float32
@@ -256,6 +259,7 @@ const (
 	setSelection
 	setLang
 	setDecoOffset
+	setCaret
 	setStroke
 	setTabSize
 
@@ -304,11 +308,12 @@ type layoutStyle struct {
 	// the first lines of its label and control.
 	baselines bool
 
-	maxLines int
-	single   bool
-	noWrap   bool
-	balance  bool
-	ellipsis string
+	maxLines   int
+	single     bool
+	noWrap     bool
+	balance    bool
+	keepSpaces bool
+	ellipsis   string
 }
 
 // Element is a node of a frame's user interface. The functions that create
@@ -497,12 +502,15 @@ type node struct {
 	tipText string
 	// highlighted is set on the option of a select the pointer or the
 	// arrows are on, and keepOpen on an item of a menu that leaves the
-	// menu open as it is chosen (KeepOpen).
-	highlighted bool
-	keepOpen    bool
-	accValue    string
-	accRange    [3]float64
-	hasRange    bool
+	// menu open as it is chosen (KeepOpen). focusHighlights marks an
+	// option of a select, which assistive technology focusing highlights,
+	// as the arrows do, rather than choosing it.
+	highlighted     bool
+	focusHighlights bool
+	keepOpen        bool
+	accValue        string
+	accRange        [3]float64
+	hasRange        bool
 	// accFill describes the element to assistive technology further, as
 	// a code editor its text and selection.
 	accFill func(n *platform.AccessNode)
@@ -568,8 +576,9 @@ type node struct {
 	activeDescendant *node
 	nameFrom         *node
 	// nameJoin makes the element's name nameFrom's followed by its Label,
-	// as a range slider's knobs.
-	nameJoin bool
+	// as a range slider's knobs; labelledBy makes it nameFrom's in place
+	// of its Label (LabelledBy).
+	nameJoin, labelledBy bool
 	// focusTo is the element taking the focus that Focus and AutoFocus
 	// give this one, and whose focus Focused reports: the input of the box
 	// around it (field).
@@ -1513,8 +1522,18 @@ func (e *node) InsetShadow(x, y, blur, spread float32, c Color) *node {
 // start afresh.
 func (e *node) NoShadow() *node { e.shadows = e.shadows[:0]; return e }
 
-// Opacity makes the element and its children translucent.
+// Opacity makes the element and its children translucent as one group,
+// as CSS's opacity does: what they paint is composited first and then
+// faded, so that children overlapping one another, or the element's
+// background under them, never show through each other. Where nothing
+// they paint overlaps, they paint faded each on its own, which looks the
+// same and costs nothing more; otherwise they render into a layer of the
+// GPU first, in which text is smoothed in grayscale, as in Cache's. A web
+// view or a material reading its backdrop inside the element shows
+// through no layer: there each thing fades on its own. Disabled's dimming
+// fades each thing on its own too.
 func (e *node) Opacity(o float32) *node {
+	linkGroups()
 	e.opacity, e.opacitySet = max(0, min(o, 1)), true
 	return e
 }
@@ -1559,6 +1578,23 @@ func (ts *textStyle) selectionColor(t *Theme) Color {
 		return ts.selection
 	}
 	return t.Selection
+}
+
+// CaretColor sets the color of the insertion caret of the text inputs in
+// the element, as CSS's caret-color does, a field's own text color for
+// one; the theme's accent is the color elsewhere.
+func (e *node) CaretColor(c Color) *node {
+	e.ts.caret = c
+	e.ts.set |= setCaret
+	return e
+}
+
+// caretColor is the color of the style's insertion caret.
+func (ts *textStyle) caretColor(t *Theme) Color {
+	if ts.set&setCaret != 0 {
+		return ts.caret
+	}
+	return t.Accent
 }
 
 // LineHeight sets the height of lines of text as a multiple of the font
@@ -1738,6 +1774,13 @@ func (e *node) NoWrap() *node { e.noWrap = true; return e }
 // layout, as the text system keeps it.
 func (e *node) Balance() *node { e.balance = true; return e }
 
+// PreserveSpaces keeps the spaces the element's text ends its lines with,
+// and a text of only spaces, with their advance, as CSS's white-space:
+// break-spaces does: a gap made of spaces between two texts in a row, or
+// the padding a monospaced column is aligned with. Without it spaces
+// ending a line take no room, as with white-space: normal.
+func (e *node) PreserveSpaces() *node { e.keepSpaces = true; return e }
+
 // Ellipsis sets what ends text that MaxLines or SingleLine cuts, "…" by
 // default.
 func (e *node) Ellipsis(s string) *node { e.ellipsis = s; return e }
@@ -1791,6 +1834,23 @@ func (e *node) hasState() bool {
 
 // Focusable lets the element take the keyboard focus, by a click or Tab.
 func (e *node) Focusable() *node { e.flags |= flagFocusable; return e }
+
+// TabStop makes the element focusable, and sets whether Tab and Shift+Tab
+// stop at it, as they do at a Focusable element. One that is no tab stop
+// is HTML's tabindex="-1": it takes the focus from a click, from Focus and
+// AutoFocus, and from assistive technology, while Tab passes over it, on
+// to what is inside it and after it: a container that takes the focus to
+// hold its keys, as a card or a dialog's panel, without coming before its
+// own controls.
+func (e *node) TabStop(stop bool) *node {
+	e.flags |= flagFocusable
+	if stop {
+		e.flags &^= flagFocusTarget
+	} else {
+		e.flags |= flagFocusTarget
+	}
+	return e
+}
 
 // DragWindow makes the element a handle that moves the window, such as the
 // title bar of a frameless window. A double click on it maximizes the

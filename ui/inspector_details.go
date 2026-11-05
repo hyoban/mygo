@@ -432,6 +432,9 @@ func textStyles(ts *textStyle, set uint32) []inspDecl {
 	if set&setSelection != 0 {
 		ds = append(ds, inspDecl{name: "selection-color", value: colorText(ts.selection), color: ts.selection, swatch: true})
 	}
+	if set&setCaret != 0 {
+		ds = append(ds, inspDecl{name: "caret-color", value: colorText(ts.caret), color: ts.caret, swatch: true})
+	}
 	if set&setStroke != 0 {
 		ds = append(ds, inspDecl{name: "-webkit-text-stroke", value: pxText(ts.strokeWidth) + " " + colorText(ts.strokeColor), color: ts.strokeColor, swatch: true})
 	}
@@ -661,6 +664,22 @@ func cursorText(c Cursor) string {
 		return "grabbing"
 	case CursorNone:
 		return "none"
+	case CursorProgress:
+		return "progress"
+	case CursorWait:
+		return "wait"
+	case CursorHelp:
+		return "help"
+	case CursorCell:
+		return "cell"
+	case CursorZoomIn:
+		return "zoom-in"
+	case CursorZoomOut:
+		return "zoom-out"
+	case CursorAllScroll:
+		return "all-scroll"
+	case CursorNoDrop:
+		return "no-drop"
 	}
 	return "default"
 }
