@@ -3,7 +3,9 @@
 package sfsymbols
 
 import (
+	"bytes"
 	"image"
+	"image/png"
 	"math"
 	"runtime"
 	"structs"
@@ -169,15 +171,7 @@ func Image(name string, px int, col ui.Color, o Options) (ui.ImageSource, bool) 
 		return nil, false
 	}
 	if !drawn {
-		var absent bool
-		if coverage, drawn, absent = rasterize(name, px, o.Natural, o.Weight); !drawn {
-			// Only a name AppKit has no symbol for is remembered: another
-			// failure may not happen at another size or weight.
-			if absent {
-				mu.Lock()
-				missing.put(name, struct{}{})
-				mu.Unlock()
-			}
+		if coverage, drawn = shapeOf(sk); !drawn {
 			return nil, false
 		}
 	}
@@ -187,6 +181,50 @@ func Image(name string, px int, col ui.Color, o Options) (ui.ImageSource, bool) 
 	tinted.put(tk, b)
 	mu.Unlock()
 	return b, true
+}
+
+// PNG returns the SF Symbol named name drawn px pixels square as a PNG
+// image in black on transparent, a template image as mygo.NewMenuIcon
+// takes one to show a symbol in a menu, or false where the system has no
+// such symbol. px is limited as Image's.
+func PNG(name string, px int, o Options) ([]byte, bool) {
+	if !loadCG() {
+		return nil, false
+	}
+	sk := shapeKey{name: name, px: min(max(px, 8), maxPx), natural: o.Natural, weight: o.Weight}
+	mu.Lock()
+	coverage, drawn := shapes.get(sk)
+	_, absent := missing.get(name)
+	mu.Unlock()
+	if absent {
+		return nil, false
+	}
+	if !drawn {
+		if coverage, drawn = shapeOf(sk); !drawn {
+			return nil, false
+		}
+		mu.Lock()
+		shapes.put(sk, coverage)
+		mu.Unlock()
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, tint(coverage, ui.Color{A: 255})); err != nil {
+		return nil, false
+	}
+	return buf.Bytes(), true
+}
+
+// shapeOf has AppKit draw the shape of a symbol, remembering a name it
+// has no symbol for, as missing: another failure may not happen at
+// another size or weight.
+func shapeOf(sk shapeKey) (*image.RGBA, bool) {
+	coverage, drawn, absent := rasterize(sk.name, sk.px, sk.natural, sk.weight)
+	if absent {
+		mu.Lock()
+		missing.put(sk.name, struct{}{})
+		mu.Unlock()
+	}
+	return coverage, drawn
 }
 
 // canvas makes a bitmap context over pix, w by h pixels, and returns it

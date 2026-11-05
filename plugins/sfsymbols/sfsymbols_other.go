@@ -11,6 +11,11 @@ func Image(name string, px int, col ui.Color, o Options) (ui.ImageSource, bool) 
 	return nil, false
 }
 
+// PNG returns the SF Symbol named name drawn px pixels square as a PNG
+// template image, or false where the system has no such symbol. Here it
+// never has one.
+func PNG(name string, px int, o Options) ([]byte, bool) { return nil, false }
+
 // Available reports whether this system draws SF Symbols at all. It does
 // not.
 func Available() bool { return false }

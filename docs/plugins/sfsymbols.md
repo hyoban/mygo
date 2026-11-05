@@ -76,6 +76,21 @@ Every other OS has no SF Symbols: `Image` returns false there, so keep an
 icon of your own to fall back on, and use `ui.Image` or `Painter.Image`
 (with `ui.Contain`) for what it returns.
 
+## PNG
+
+`PNG(name, px, opts)` returns the symbol as a PNG image, black on
+transparent, a template image for
+[`mygo.NewMenuIcon`](../menus.md#icons): menus show it in the color of
+their text, as macOS's own menus show symbols. Make each icon once:
+
+```go
+if data, ok := sfsymbols.PNG("doc.on.doc", 32, sfsymbols.Options{}); ok {
+	copyIcon, _ = mygo.NewMenuIcon(data, true)
+}
+```
+
+It returns false where `Image` does.
+
 Apps that don't import the plugin don't pay for it.
 
 See `examples/sf-symbols`, which shows every symbol with a search:

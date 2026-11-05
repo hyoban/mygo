@@ -3,7 +3,9 @@
 package sfsymbols
 
 import (
+	"bytes"
 	"image"
+	"image/png"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -24,6 +26,41 @@ func TestImage(t *testing.T) {
 	}
 	if _, ok := Image("no.symbol.of.that.name", 48, ui.Hex("#ffffff"), Options{}); ok {
 		t.Fatal("a name the system has not drew as a symbol")
+	}
+}
+
+// TestPNG checks that a symbol encodes as a black template image of the
+// size asked for, which covers some of it, and that a name the system has
+// not gives none.
+func TestPNG(t *testing.T) {
+	data, ok := PNG("doc.on.doc", 32, Options{})
+	if !ok {
+		t.Fatal("the system draws no doc.on.doc")
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 32 || b.Dy() != 32 {
+		t.Fatalf("%v, want 32x32 pixels", b)
+	}
+	covered := 0
+	for y := range 32 {
+		for x := range 32 {
+			r, g, b, a := img.At(x, y).RGBA()
+			if r|g|b != 0 {
+				t.Fatalf("pixel %d,%d is %v, not black", x, y, img.At(x, y))
+			}
+			if a > 0 {
+				covered++
+			}
+		}
+	}
+	if covered == 0 || covered == 32*32 {
+		t.Errorf("%d of %d pixels covered", covered, 32*32)
+	}
+	if _, ok := PNG("no.symbol.of.that.name", 32, Options{}); ok {
+		t.Error("a name the system has not encoded as a symbol")
 	}
 }
 
