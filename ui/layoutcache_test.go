@@ -454,13 +454,14 @@ func TestLayoutInputs(t *testing.T) {
 	// Fields the layout never reads.
 	other := "epoch key valueInput id depth track transform translatePct world content contentSet " +
 		"pose poseAnim poseSet poseM poseFade reposed ink noCull backface bg fill grad stripes borderC borderStyle radius " +
-		"shadows material effect effecting cache grads blur opacity opacitySet undimmed cursor paintFn objectFn styleFn paintAfterFn " +
+		"shadows material effect effecting cache grads blur opacity opacitySet undimmed cursor paintFn hitFn objectFn styleFn paintAfterFn " +
 		"inputFn observeFn textClient caret takesText noIME copyData servicedText webView native maximizeButton fit gray objectPos dismissed rotate label widget role " +
-		"checked expanded busy current vertical tip tipText highlighted focusHighlights keepOpen accValue accRange hasRange accFill accStep barInset scrollBase hideScrollbars keepScrollbars barsFrom snap snapAlign " +
+		"checked expanded busy current autoComplete vertical tip tipText highlighted focusHighlights keepOpen accValue accRange hasRange accFill accStep barInset scrollBase hideScrollbars keepScrollbars barsFrom snap snapAlign " +
 		"listRow rowIndex rowsOf focusGroup groupSelects segment activeDescendant nameFrom nameJoin labelledBy focusTo " +
 		"keyShortcuts " +
 		"setPos setSize choosesItems search description invalid followX sort level expandable " +
-		"chooseMany serial ignoreInput accessHidden themed lift ringOffset ringColor ringSet clipping zIndex zOrder"
+		"chooseMany serial ignoreInput accessHidden accessDisabled themed lift ringOffset ringColor ringSet clipping zIndex zOrder " +
+		"roleDescription controls hasPopup"
 	known := map[string]bool{}
 	for _, f := range strings.Fields(read + " " + other) {
 		known[f] = true

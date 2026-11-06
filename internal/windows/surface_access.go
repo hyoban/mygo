@@ -136,6 +136,7 @@ const (
 	uiaAriaPropertiesProperty   = 30102
 	uiaLandmarkTypeProperty     = 30157
 	uiaLocalizedLandmarkType    = 30158
+	uiaControllerForProperty    = 30104
 
 	uiaFocusChangedEvent                = 20005
 	uiaElementAddedToSelectionEvent     = 20010
@@ -156,6 +157,7 @@ const (
 	vtBSTR    = 8
 	vtBool    = 11
 	vtUnknown = 13
+	vtArray   = 0x2000
 
 	uiaElementNotEnabled   = 0x80040200
 	uiaElementNotAvailable = 0x80040201
@@ -306,7 +308,9 @@ func (e *uiaElement) supports(i int) bool {
 		switch n.Role {
 		case platform.RoleRadio, platform.RoleTab, platform.RoleTreeItem:
 			return true
-		case platform.RoleListItem, platform.RoleRow:
+		case platform.RoleListItem, platform.RoleRow, platform.RoleCell, platform.RoleColumnHeader, platform.RoleRowHeader:
+			// Rows a list chooses, and cells chosen or not, as ARIA's
+			// gridcells with aria-selected.
 			return n.States&platform.AccessSelectable != 0
 		}
 		return false
@@ -328,8 +332,9 @@ func (e *uiaElement) supports(i int) bool {
 		return n.Role == platform.RoleTextField && n.States&platform.AccessPassword == 0
 	case ifaceExpandCollapse:
 		// A menu button expands into its menu, as WinUI's DropDownButton.
+		// What opens a popup (aria-haspopup) expands into it too.
 		return n.Role == platform.RolePopUpButton || n.Role == platform.RoleTreeItem || n.Role == platform.RoleMenuButton ||
-			n.Role == platform.RoleComboBox || n.Role == platform.RoleDisclosure
+			n.Role == platform.RoleComboBox || n.Role == platform.RoleDisclosure || n.HasPopup != platform.PopupNone
 	}
 	return false
 }
@@ -716,12 +721,14 @@ func (e *uiaElement) runtimeID() []int32 {
 	return []int32{3, int32(uint32(e.n.ID)), int32(uint32(e.n.ID >> 32))}
 }
 
-// act performs an action of assistive technology on the element.
+// act performs an action of assistive technology on the element. One
+// disabled takes none, but the focus where it keeps it, as one that is
+// only unavailable does (aria-disabled), as Chromium's.
 func (e *uiaElement) act(action platform.AccessActionKind, text string) uintptr {
 	switch {
 	case e.dead:
 		return uiaElementNotAvailable
-	case e.n.States&platform.AccessDisabled != 0:
+	case e.n.States&platform.AccessDisabled != 0 && (action != platform.AccessFocus || e.n.Actions&platform.ActionFocus == 0):
 		return uiaElementNotEnabled
 	}
 	e.tree.s.send(platform.SurfaceEvent{Kind: platform.AccessAction, ID: e.n.ID, Action: action, Text: text})
@@ -1151,6 +1158,11 @@ func (e *uiaElement) property(id int, v *variant) {
 	case uiaControlTypeProperty:
 		*v = variant{VT: vtI4, Val: uint64(uiaControlTypes[n.Role])}
 	case uiaLocalizedControlProperty:
+		if n.RoleDescription != "" {
+			// What the app calls its role (aria-roledescription).
+			str(n.RoleDescription)
+			break
+		}
 		switch n.Role {
 		case platform.RoleSwitch:
 			str("toggle switch")
@@ -1200,6 +1212,24 @@ func (e *uiaElement) property(id int, v *variant) {
 			str("ascending")
 		case n.States&platform.AccessSortDescending != 0:
 			str("descending")
+		case n.States&platform.AccessSortOther != 0:
+			str("other")
+		}
+	case uiaControllerForProperty:
+		// What the element controls (aria-controls), of this tree.
+		var targets []*uiaElement
+		for _, id := range n.Controls {
+			if t := e.tree.nodes[id]; t != nil {
+				targets = append(targets, t)
+			}
+		}
+		if len(targets) > 0 {
+			sa, _, _ := procSafeArrayCreateVector.Call(vtUnknown, 0, uintptr(len(targets)))
+			for i, t := range targets {
+				index := int32(i)
+				procSafeArrayPutElement.Call(sa, uintptr(unsafe.Pointer(&index)), t.ptr(ifaceSimple))
+			}
+			*v = variant{VT: vtArray | vtUnknown, Val: uint64(sa)}
 		}
 	case uiaIsDataValidProperty:
 		*v = boolVariant(n.States&platform.AccessInvalid == 0)
@@ -1269,7 +1299,11 @@ func (e *uiaElement) property(id int, v *variant) {
 
 // ariaProperties returns the ARIA states of a node that UI Automation has
 // no property of, as Chromium gives them in AriaProperties: busy=true for
-// content about to change, and current=page for the current item.
+// content about to change, current=page for the current item, the kind of
+// popup the element opens (haspopup=menu), and the order a column sorts
+// its table in (sort=ascending); and autocomplete=list for a field whose
+// suggestions show in a popup, which Chromium gives IAccessible2 alone,
+// as an object attribute.
 func ariaProperties(n platform.AccessNode) string {
 	var props []string
 	if n.States&platform.AccessBusy != 0 {
@@ -1277,6 +1311,20 @@ func ariaProperties(n platform.AccessNode) string {
 	}
 	if c := n.Current; c != platform.CurrentNone {
 		props = append(props, "current="+c.String())
+	}
+	if a := n.AutoComplete; a != platform.AutoCompleteNone {
+		props = append(props, "autocomplete="+a.String())
+	}
+	if p := n.HasPopup; p != platform.PopupNone {
+		props = append(props, "haspopup="+p.String())
+	}
+	switch {
+	case n.States&platform.AccessSortAscending != 0:
+		props = append(props, "sort=ascending")
+	case n.States&platform.AccessSortDescending != 0:
+		props = append(props, "sort=descending")
+	case n.States&platform.AccessSortOther != 0:
+		props = append(props, "sort=other")
 	}
 	return strings.Join(props, ";")
 }

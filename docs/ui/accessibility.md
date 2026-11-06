@@ -116,6 +116,11 @@ your own tells it with these, as ARIA's states do on the web:
 | `ActiveDescendant(e)` | the option that has the focus while the element keeps it, as the one the arrows are on in a menu or a list |
 | `Busy(on)` | that the element's content is about to change, as a region loading: screen readers wait for it before reading it |
 | `Current(kind)` | that the element is the current one of the items around it: `ui.CurrentPage` (the page the user is on), `CurrentStep`, `CurrentLocation`, `CurrentDate`, `CurrentTime` or `CurrentItem` |
+| `AutoComplete(kind)` | what a text input's suggestions complete as the user types: `ui.AutoCompleteList` (a popup of them), `AutoCompleteInline` (the text completed in place) or `AutoCompleteBoth` ([below](#suggestions)) |
+| `RoleDescription(s)` | what to call its role, in place of the role's own name, as "carousel" for a group of slides and "slide" for each |
+| `Controls(e)` | that it controls the content or presence of `e`, as a disclosure button the region it opens; once for each |
+| `HasPopup(kind)` | the kind of popup it opens: `ui.PopupMenu`, `PopupListBox`, `PopupTree`, `PopupGrid` or `PopupDialog` |
+| `Sort(dir)` | the order a table's rows are sorted in by the column whose header it is: `ui.SortAscending`, `SortDescending`, `SortOther` or `SortNone` |
 
 ```go
 all := ui.CheckboxBase(c, &app.all).Label("Select all")
@@ -155,6 +160,55 @@ ATK's busy state and UI Automation's `AriaProperties` (`busy=true`);
 `Current` is AppKit's `AXARIACurrent`, ATK's `current` attribute with the
 active state, and `AriaProperties` (`current=page`).
 
+A cell of a grid says whether it is chosen with `Checked`, as ARIA's
+`aria-selected` on a `gridcell`, without painting it, as a calendar's
+days or the cells of a spreadsheet of your own; `Selected` paints it in
+the accent color too. Cells (`RoleCell`, `RoleColumnHeader`,
+`RoleRowHeader`) that call neither are not chosen among others, and a
+table (`RoleTable`) holding cells that do chooses them. A carousel, a
+disclosure and a button opening a list box, built on the others:
+
+```go
+ui.Column(c).Role(ui.RoleGroup).Label("Highlights").RoleDescription("carousel").Children(func() {
+	for i, s := range slides {
+		ui.Column(c).Role(ui.RoleGroup).Label(fmt.Sprintf("%d of %d", i+1, len(slides))).
+			RoleDescription("slide").AccessHidden(i != app.slide).Children(s)
+	}
+})
+
+toggle := ui.Button(c, "Details").Expanded(app.open)
+if app.open {
+	toggle.Controls(ui.Column(c).Role(ui.RoleRegion).Label("Details").Children(details))
+}
+
+ui.ButtonBase(c).Role(ui.RolePopUpButton).Label("Fruit").Value(app.fruit).
+	HasPopup(ui.PopupListBox).Expanded(app.picking)
+
+day := ui.Box(c).Role(ui.RoleCell).Label(d.Format("January 2")).Checked(d.Equal(app.picked))
+```
+
+They reach each platform as WAI-ARIA's Core Accessibility API Mappings
+say. `RoleDescription` is AppKit's `AXRoleDescription`, ATK's
+`roledescription` attribute and UI Automation's `LocalizedControlType`.
+`Controls` is AppKit's `AXLinkedUIElements`, ATK's `controller-for`
+relation (and `controlled-by` on what it controls) and UI Automation's
+`ControllerFor`, which screen readers offer to move to (VoiceOver's
+VO-J). `HasPopup` is AppKit's `AXPopupValue` with the `AXShowMenu`
+action, which presses the element, ATK's `has-popup` state and
+`haspopup` attribute, and UI Automation's ExpandCollapse pattern (with
+`Expanded`) and `AriaProperties` (`haspopup=listbox`). `Sort` is
+AppKit's `AXSortDirection` (unknown for another order) on a header that
+is a sort button (`AXSortButton`), as NSTableHeaderView's are, ATK's
+`sort` attribute, and UI Automation's `ItemStatus` and `AriaProperties`
+(`sort=other`), as [`Table`](table.md)'s headers say from
+`ListState.Sort`. A chosen cell is AppKit's `AXSelected` with its
+table's `AXSelectedCells`, and its row in the table's `AXSelectedRows`,
+as NSTableView tells its choice; as VoiceOver reads neither the state of
+a cell nor its change, the cell says "selected" after its name, in the
+app's language, and a cell chosen away from the focus is read out. It is
+ATK's selectable and selected states, and UI Automation's SelectionItem,
+in the table's Selection.
+
 A [test](testing.md#what-assistive-technology-sees) reads them as
 assistive technology gets them, with `Tester.AccessByRole`:
 
@@ -162,11 +216,43 @@ assistive technology gets them, with `Tester.AccessByRole`:
 if a, _ := tt.AccessByRole(ui.RoleGroup, "Messages"); !a.Busy {
 	t.Error("Messages is not busy while loading")
 }
+if day, _ := tt.AccessByRole(ui.RoleCell, "November 2"); !day.Selected {
+	t.Error("the day picked is not selected")
+}
 ```
 
 A check box that is mixed as often as not is better built on
 [`CheckboxStateBase`](checkbox.md#without-a-look), which tells it itself
 from its `ui.CheckState`, and checks it as it is pressed.
+
+## Suggestions
+
+`AutoComplete(kind)` tells screen readers what a text input's suggestions
+complete as the user types, as ARIA's `aria-autocomplete`, so that they
+say a field has them: `ui.AutoCompleteList` for a popup of the values
+matching what was typed, `AutoCompleteInline` for the rest of the value
+inserted after the caret, selected, and `AutoCompleteBoth` for both. A
+[combobox](combobox.md), an [autocomplete](autocomplete.md) and a
+[token field](token-field.md) with suggestions tell `AutoCompleteList`
+themselves; a combobox of your own, with `Expanded` for its popup and
+`ActiveDescendant` for the option the arrows are on, tells it too:
+
+```go
+in := ui.TextInputBase(c, &app.query).Role(ui.RoleComboBox).Label("Search")
+in.Expanded(len(app.matches) > 0).AutoComplete(ui.AutoCompleteList)
+```
+
+It only tells: the view shows the suggestions itself. `AutoCompleteNone`,
+the default, tells nothing, as for a combobox whose popup shows the same
+options whatever is typed. It is AppKit's `AXAutocompleteValue` on macOS,
+as WebKit gives it, ATK's `autocomplete` object attribute with the
+supports-autocompletion state on Linux, as Core-AAM maps it, and
+`autocomplete=list` in UI Automation's `AriaProperties` on Windows, the
+place of ARIA's properties UI Automation has none of. A
+[test](testing.md#what-assistive-technology-sees) reads it in the
+`AutoComplete` of `Tester.AccessByRole`'s answer, and the
+[automation plugin](../plugins/automation.md) in a node's
+`autoComplete`.
 
 ## Descriptions and errors
 
@@ -225,6 +311,40 @@ Down are read as they move the choice, and focusing a row chooses it. A
 screen reader moving out of view asks the list to scroll there, which
 builds the rows it reaches. `Label` names a list or a table.
 
+## Unavailable, still reachable
+
+`Disabled(true)` does three things: the element reads as disabled, it
+leaves the focus and the Tab order and takes no clicks, and it shows at
+half its opacity (unless `DimDisabled(false)`). A screen reader moving
+by Tab then never reaches it. `AccessDisabled(true)` does the first alone,
+as HTML's `aria-disabled="true"`, for what the user must still find while
+it cannot be used, as the APG asks of a menu item whose action is
+blocked, a tab disabled but still in the arrows' order, or a submit
+button while the form is not valid: the element, and those inside it,
+read as disabled (dimmed, unavailable), and keep the focus, their place
+in the Tab order, the pointer and their look.
+
+```go
+del := ui.Button(c, "Delete project").AccessDisabled(app.locked)
+if app.locked {
+	del.Description("Unlock the project to delete it")
+}
+if del.Clicked() && !app.locked {
+	app.deleteProject()
+}
+```
+
+It only tells: clicks, Enter and Space still press the element, which
+the view ignores while it is unavailable, as on the web, and it shows as
+the view styles it. Assistive technology focuses it and reads it, its
+`Description` with it, but neither presses nor edits it. It is AppKit's
+`AXEnabled` false on macOS, ATK's enabled and sensitive states left out
+on Linux, and UI Automation's `IsEnabled` false on Windows, with
+`IsKeyboardFocusable` true and its `SetFocus` taken, as Chromium's
+aria-disabled. A [test](testing.md#what-assistive-technology-sees)
+reads it as `Disabled` with `Focusable` in `Tester.AccessByRole`'s
+answer.
+
 ## Out of the pointer's way
 
 `IgnoreInput(true)` leaves an element, and those inside it, to assistive
@@ -257,7 +377,7 @@ both go through the keyboard focus; it can set a text input's value.
 Unlike HTML's `inert`, which hides an element from assistive technology
 too, it stays in the tree: `Invisible` and `Hidden` take it out of it,
 `AccessHidden` too while it still shows, and `Disabled` keeps it there
-without its press.
+without its press, as `AccessDisabled` does with its focus too.
 
 ## Out of assistive technology's way
 

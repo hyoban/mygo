@@ -672,6 +672,9 @@ type state struct {
 	// not choose again.
 	rowPressed, pressChose bool
 
+	// hitFn is where in its box the element takes the pointer (HitTest).
+	hitFn func(x, y float32, r Rect) bool
+
 	world scene.Affine
 	clips bool
 	// lifted tells that it was an element flying with a Match, which
@@ -715,9 +718,11 @@ type state struct {
 	flags          uint32
 	// ignoreInput tells that the element, or one around it, ignores the
 	// pointer and the keyboard (IgnoreInput); accessHidden, that it is
-	// out of what assistive technology reads (AccessHidden, or inert).
-	ignoreInput, accessHidden bool
-	cursor                    Cursor
+	// out of what assistive technology reads (AccessHidden, or inert);
+	// accessDisabled, that assistive technology reads it as unavailable
+	// (AccessDisabled).
+	ignoreInput, accessHidden, accessDisabled bool
+	cursor                                    Cursor
 	// tip marks an element with a tooltip (TooltipBase), which shows once
 	// the pointer has rested on it for tipDelay, or at once within tipWarm
 	// of another going: its theme's TooltipDelay; tipText marks one the
@@ -848,13 +853,16 @@ type state struct {
 	// dragValue is the value the element drags (Drag), or dragFn returns
 	// it as the drag starts; accepts reports whether it takes a value
 	// dragged (Drop), and droppedValue is the value dropped on it, while
-	// hasDropped, at (dropX, dropY).
+	// hasDropped, at (dropX, dropY). dragMissed is set on the source when
+	// its value was let go over no element taking it, at (missX, missY).
 	dragValue    any
 	dragFn       func() any
 	accepts      func(any) bool
 	droppedValue any
 	hasDropped   bool
 	dropX, dropY float32
+	dragMissed   bool
+	missX, missY float32
 	dataSource   *dataSource
 	dataTarget   *transfer.DropOptions
 	dataDropped  *transfer.Drop

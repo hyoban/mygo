@@ -428,8 +428,11 @@ type engine struct {
 	held       bool
 	shown      time.Time
 	input      bool
-	painted    [3]float32
-	gen        uint64
+	// hiddenAsked tells that a view asked whether the window shows
+	// (WindowHidden), which builds it again as that changes.
+	hiddenAsked bool
+	painted     [3]float32
+	gen         uint64
 	// repaintRate is the most frames a second the drawings that move ask
 	// for with Painter.AnimationFrameRate, repaintFull whether one asked
 	// for the display's with Painter.AnimationFrame. paceEvery is how many
@@ -1047,10 +1050,13 @@ func (rt *engine) repaintFrame(w, h, scale float32) {
 	rt.c.now = rt.frameTime()
 	rt.text.BeginFrame()
 	rt.repainting, rt.repaintAt = false, time.Time{}
+	// What the last frame painted outside Draw callbacks that asked to be
+	// painted again, as a content transition, moves only painted whole.
+	whole := rt.untracked
 	rt.repaintRate, rt.repaintFull, rt.untracked = 0, false, false
 	root := rt.c.root
 	rt.repose()
-	if !rt.repaintParts() {
+	if whole || !rt.repaintParts() {
 		rt.paint(root, w, h, scale)
 	}
 	for try := 0; try < 2 && rt.text.Full(); try++ {
@@ -1108,6 +1114,7 @@ func (rt *engine) forgetInput() {
 		s.released = false
 		s.dropped = nil
 		s.droppedValue, s.hasDropped = nil, false
+		s.dragMissed = false
 		s.dataDropped = nil
 		if s.releaseLater.due {
 			// The pass read the moves of a press that ended: the next
@@ -1382,6 +1389,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 		s.clipRect, s.clipRadii = e.clipRect()
 	}
 	s.selfClip, s.selfRadius, s.selfClips = e.selfClip()
+	s.hitFn = e.hitFn
 	if len(rt.liftHits) > 0 && (e == e.c.overlay || e.parent != nil && e.parent == e.c.overlay) {
 		// The elements flying in the layer before, the window's content
 		// or an overlay, go over it, under this one.
@@ -1411,6 +1419,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	}
 	s.ignoreInput = e.ignoreInput || e.parent != nil && e.parent.st.ignoreInput
 	s.accessHidden = e.accessHidden || e.flags&flagInert != 0 || e.parent != nil && e.parent.st.accessHidden
+	s.accessDisabled = e.accessDisabled || e.parent != nil && e.parent.st.accessDisabled
 	s.cursor, s.tip, s.tipText = e.cursor, e.tip, e.tipText
 	s.webView, s.native = e.webView, e.native
 	s.role, s.focusHighlights = e.role, e.focusHighlights

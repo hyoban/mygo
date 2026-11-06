@@ -239,6 +239,8 @@ type textStyle struct {
 	strokeColor Color
 	// tabSize puts tab stops every tabSize spaces (TabSize).
 	tabSize float32
+	// shadow is the shadow the glyphs cast (TextShadow).
+	shadow TextShadow
 }
 
 const (
@@ -262,9 +264,10 @@ const (
 	setCaret
 	setStroke
 	setTabSize
+	setShadow
 
 	// setAll has every bit of textStyle.set.
-	setAll = setTabSize<<1 - 1
+	setAll = setShadow<<1 - 1
 )
 
 // layoutStyle is what lays an element out, of what the view sets on it:
@@ -312,6 +315,7 @@ type layoutStyle struct {
 	single     bool
 	noWrap     bool
 	balance    bool
+	pretty     bool
 	keepSpaces bool
 	ellipsis   string
 }
@@ -393,6 +397,10 @@ type node struct {
 	// assistive technology reads, while they still show and take input
 	// (AccessHidden).
 	accessHidden bool
+	// accessDisabled tells assistive technology that it and the elements
+	// inside it are unavailable, while they keep the focus, the pointer
+	// and their look (AccessDisabled).
+	accessDisabled bool
 
 	// Painting.
 	bg          Color
@@ -422,6 +430,9 @@ type node struct {
 	undimmed   bool // kept at its opacity while disabled (DimDisabled)
 	cursor     Cursor
 	paintFn    func(p *Painter, r Rect)
+	// hitFn tells where in its box the element takes the pointer
+	// (HitTest).
+	hitFn func(x, y float32, r Rect) bool
 	// objectFn draws the inline objects of a text (DrawObjects).
 	objectFn func(p *Painter, at int, r Rect)
 	// styleFn sets the colors and opacity the element paints with, as it
@@ -490,10 +501,12 @@ type node struct {
 	role     Role
 	checked  int8
 	expanded bool
-	// busy marks content about to change (Busy), and current the item
-	// the element is the current one of (Current).
-	busy    bool
-	current Current
+	// busy marks content about to change (Busy), current the item the
+	// element is the current one of (Current), and autoComplete what the
+	// suggestions of a text input complete (AutoComplete).
+	busy         bool
+	current      Current
+	autoComplete AutoComplete
 	// vertical marks a slider going up (Vertical).
 	vertical bool
 	// tip marks an element with a tooltip (TooltipBase), and tipText one
@@ -598,7 +611,7 @@ type node struct {
 	// as a table's; followX is the scroll container whose horizontal
 	// offset the element's content follows, as a table's header follows
 	// its rows; sort is the order a table's column header shows: 1
-	// ascending, 2 descending.
+	// ascending, 2 descending, 3 another (SortDirection).
 	rowMinW float32
 	followX *node
 	sort    int8
@@ -612,7 +625,13 @@ type node struct {
 	// how many columns its items took.
 	chooseMany bool
 	gridFit    *gridFit
-	tl         *text.Layout
+	// roleDescription names the element's role to assistive technology
+	// (RoleDescription), controls are the elements it controls
+	// (Controls), and hasPopup the kind of popup it opens (HasPopup).
+	roleDescription string
+	controls        []*node
+	hasPopup        Popup
+	tl              *text.Layout
 	measured
 	// lay says what the layout cache may do with the element
 	// (layOwner, layReuse), and laid when layoutBox last laid it out, in
@@ -1330,6 +1349,30 @@ func (e *node) IgnoreInput(ignore bool) *node { e.ignoreInput = ignore; return e
 // RoleNone leaves out the element but not those inside it.
 func (e *node) AccessHidden(hide bool) *node { e.accessHidden = hide; return e }
 
+// AccessDisabled tells assistive technology that the element and those
+// inside it are unavailable when off is true, as HTML's aria-disabled
+// does, while they keep the keyboard focus, their place in the Tab order,
+// the pointer and their look: a screen reader still reaches them and reads
+// them, as dimmed or unavailable, with their Description, which can say
+// why. It is for what the user must still find while it cannot be used,
+// as a menu item whose action is blocked, a tab disabled but still in the
+// arrows' order, or a submit button while the form is not valid:
+//
+//	del := ui.Button(c, "Delete project").AccessDisabled(app.locked)
+//	if app.locked {
+//		del.Description("Unlock the project to delete it")
+//	}
+//	if del.Clicked() && !app.locked {
+//		app.deleteProject()
+//	}
+//
+// It only tells: clicks and keys still reach the element, which the view
+// ignores while it is unavailable, and it does not dim it, which the view
+// styles itself if it wants. Assistive technology focuses it, but neither
+// presses nor edits it. Disabled does all of it at once: no clicks, no
+// focus, and half the opacity.
+func (e *node) AccessDisabled(off bool) *node { e.accessDisabled = off; return e }
+
 // Hidden hides the element and its children when hide is true, as CSS's
 // display: none does: unlike an Invisible element, it takes no room in
 // the layout, nor a gap between its siblings, and draws nothing, takes
@@ -1689,6 +1732,22 @@ func (e *node) TextStroke(width float32, c Color) *node {
 	return e
 }
 
+// TextShadow casts a shadow of the element's text, as CSS's text-shadow:
+// the shapes of its glyphs, offset by x and y DIPs, blurred by blur, in c,
+// under the glyphs and their strokes, as a chart's labels over its bars
+// or a caption over a photo take one to stand out. The text of the
+// elements inside takes it too, and theirs where they set one; a
+// transparent c casts none, where those around it cast one. A span's
+// Shadow sets one for its text. The shadow of color glyphs, as emoji, is
+// that of their pixels' shape; underlines and strikethroughs cast none.
+//
+//	ui.Text(c, "Golden hour").TextColor(ui.RGB(255, 255, 255)).TextShadow(0, 1, 4, ui.RGBA(0, 0, 0, 0.6))
+func (e *node) TextShadow(x, y, blur float32, c Color) *node {
+	e.ts.shadow = NewTextShadow(x, y, blur, c)
+	e.ts.set |= setShadow
+	return e
+}
+
 // TabSize puts the tab stops of the element's text every n spaces of its
 // font from the start of each line, as CSS's tab-size: a tab advances
 // to the next of them, as a code block indents with tabs of 2 or 4
@@ -1774,6 +1833,21 @@ func (e *node) NoWrap() *node { e.noWrap = true; return e }
 // layout, as the text system keeps it.
 func (e *node) Balance() *node { e.balance = true; return e }
 
+// Pretty keeps the last line of each paragraph of the element's text from
+// holding a single word, as CSS's text-wrap: pretty does at least: the
+// line before gives it a word, and the lines before stay as they are. A
+// paragraph of body text then ends on more than one word, at no cost to
+// the rest of its lines; Balance balances them all instead.
+func (e *node) Pretty() *node {
+	linkPretty.Do(text.Shared().UsePretty)
+	e.pretty = true
+	return e
+}
+
+// linkPretty lets the text system wrap text pretty once an element or a
+// TextShape asks for it, so that apps that never do not link it.
+var linkPretty sync.Once
+
 // PreserveSpaces keeps the spaces the element's text ends its lines with,
 // and a text of only spaces, with their advance, as CSS's white-space:
 // break-spaces does: a gap made of spaces between two texts in a row, or
@@ -1791,7 +1865,8 @@ func (e *node) Label(s string) *node { e.label = s; return e }
 
 // Disabled disables the element and those inside it when d is true: they
 // report no clicks, take no focus, and show at half their opacity, unless
-// DimDisabled turns that off.
+// DimDisabled turns that off. AccessDisabled keeps their clicks and their
+// focus, for what assistive technology must still reach.
 func (e *node) Disabled(d bool) *node {
 	if d {
 		e.flags |= flagDisabled
@@ -1872,6 +1947,26 @@ func (e *node) MaximizeButton() *node {
 
 // PassThrough lets the pointer reach what is under the element.
 func (e *node) PassThrough() *node { e.flags |= flagPassThrough; return e }
+
+// HitTest sets where in its box the element takes the pointer: where fn
+// reports true for the pointer at (x, y), in the coordinates Draw paints
+// in, r being its box as Draw gets it. Elsewhere the pointer reaches what
+// is under it, as with PassThrough, so that a pie's segment, a map's
+// region or a ring takes a press, the hover and the cursor only where it
+// paints, as SVG's pointer-events: visiblePainted. The elements inside it
+// take the pointer as they would; fn runs as the pointer moves and
+// presses, on the window's thread, and only tests:
+//
+//	ring := func(r ui.Rect) *ui.Path {
+//		var p ui.Path
+//		cx, cy := r.X+r.W/2, r.Y+r.H/2
+//		return p.Circle(cx, cy, r.W/2).Circle(cx, cy, r.W/2-12).FillRule(ui.EvenOdd)
+//	}
+//	ui.Box(c).Size(120, 120).
+//		Draw(func(p *ui.Painter, r ui.Rect) { p.FillPath(ring(r), accent) }).
+//		HitTest(func(x, y float32, r ui.Rect) bool { return ring(r).Contains(x, y) }).
+//		OnClick(func() { … })
+func (e *node) HitTest(fn func(x, y float32, r Rect) bool) *node { e.hitFn = fn; return e }
 
 // FocusRing sets whether MyGo rings the element when it has the keyboard
 // focus from the keyboard, as it does by default. Widgets that ring a part

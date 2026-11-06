@@ -1063,10 +1063,12 @@ type MenuItem struct {
 	Name   string
 }
 
-// FileFilter restricts the files shown in file dialogs.
+// FileFilter restricts the files shown in file dialogs: those of its
+// Extensions, and of its MIMETypes, which may be "kind/*".
 type FileFilter struct {
 	Name       string
 	Extensions []string
+	MIMETypes  []string
 }
 
 // OpenDialogOptions configures an open panel.
@@ -1241,7 +1243,27 @@ type Preferences struct {
 	// Show scroll bars: Always, or a mouse without a touchpad, gives
 	// AppKit's legacy scrollers.
 	ScrollBarsAlways bool
+	// Pointer is how accurate the primary pointing device is, and
+	// AnyPointer the most accurate of all, as Media Queries 4's pointer
+	// and any-pointer: PointerFine, a mouse's, where it is not known.
+	Pointer, AnyPointer PointerAccuracy
+	// NoHover tells that the primary pointing device cannot hover, as a
+	// touch screen, and NoAnyHover that none can (hover and any-hover:
+	// none).
+	NoHover, NoAnyHover bool
 }
+
+// PointerAccuracy is how accurately a pointing device points.
+type PointerAccuracy uint8
+
+const (
+	// PointerFine is a mouse's, a touchpad's or a pen's.
+	PointerFine PointerAccuracy = iota
+	// PointerCoarse is a finger's on a touch screen.
+	PointerCoarse
+	// PointerNone is that of no pointing device at all.
+	PointerNone
+)
 
 // FontRendering is how the desktop's settings say to rasterize text, as
 // GTK's gtk-xft settings: each field is "" for the default, or unknown.

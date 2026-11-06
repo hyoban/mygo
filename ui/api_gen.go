@@ -734,6 +734,24 @@ func (_handle *Context) WindowActive() bool {
 	return _ctx.WindowActive()
 }
 
+// WindowHidden reports whether nothing of the window shows on screen, as
+// the web's document.hidden: it is minimized, hidden, on another space or
+// desktop, or covered by other windows, as far as the system tells (see
+// the platform differences). A view that shows a clock, a price or what
+// plays stops working while it is hidden, and refreshes as it shows
+// again: the view builds once as it hides, and again as it shows, from
+// the first time it asks. Frames that only move what shows wait while it
+// is hidden anyway.
+//
+//	app.ticker.SetPaused(c.WindowHidden())
+func (_handle *Context) WindowHidden() bool {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return false
+	}
+	return _ctx.WindowHidden()
+}
+
 func (_handle *Context) WriteClipboard(s string) {
 	_ctx := _handle.build()
 	if _ctx == nil {
@@ -1213,7 +1231,9 @@ func Combobox(c *Context, selected *string, options []string) Element {
 // as the user types, clicks it or presses Down. Up and Down move among the
 // options, Enter or a click chooses one, which Chosen reports, and
 // Escape, or the input losing the focus, closes the popup. Assistive
-// technology sees a combo box, and follows the option the arrows are on.
+// technology sees a combo box, and follows the option the arrows are on;
+// tell it with AutoComplete when the options are those matching what was
+// typed (AutoCompleteList).
 //
 //	cb := ui.ComboboxBase(c, &app.query)
 //	cb.Input.Padding(6, 10).Border(1, gray).Label("Font")
@@ -1815,6 +1835,14 @@ func NativeTextField(c *Context, text *string, placeholder string) Element {
 // was given, as apps only log it.
 func NewTester(view func(c *Context), width int, height int) *Tester {
 	return coreNewTester(func(c *context) { view(makeContext(c)) }, width, height)
+}
+
+// NewTesterWith starts testing view in a window of width×height DIPs, as
+// NewTester does, with the desktop's settings of o from the first frame:
+//
+//	tt := ui.NewTesterWith(view, 400, 300, ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: true}})
+func NewTesterWith(view func(c *Context), width int, height int, o TesterOptions) *Tester {
+	return coreNewTesterWith(func(c *context) { view(makeContext(c)) }, width, height, o)
 }
 
 // NumberInput creates a text input editing *value as a number between lo
@@ -2453,7 +2481,8 @@ func Spinner(c *Context) Element {
 // it has the keyboard focus: *size is the width of first, which the
 // divider keeps 40 DIPs from either edge. With less room than that, first
 // gives way, keeping *size for when there is room again. Changed reports a
-// move. Right to left (Direction), first is on the right.
+// move. Right to left (Direction), first is on the right. SplitReset makes
+// a double click on the divider put first back at a size the app chooses.
 //
 //	ui.Split(c, &app.sidebar, app.files, app.editor).Fill()
 func Split(c *Context, size *float32, first func(), second func()) Element {
@@ -3373,6 +3402,38 @@ func (_handle Element) Access(fn func(n *platform.AccessNode)) Element {
 	return wrapElement(_node.Access(fn))
 }
 
+// AccessDisabled tells assistive technology that the element and those
+// inside it are unavailable when off is true, as HTML's aria-disabled
+// does, while they keep the keyboard focus, their place in the Tab order,
+// the pointer and their look: a screen reader still reaches them and reads
+// them, as dimmed or unavailable, with their Description, which can say
+// why. It is for what the user must still find while it cannot be used,
+// as a menu item whose action is blocked, a tab disabled but still in the
+// arrows' order, or a submit button while the form is not valid:
+//
+//	del := ui.Button(c, "Delete project").AccessDisabled(app.locked)
+//	if app.locked {
+//		del.Description("Unlock the project to delete it")
+//	}
+//	if del.Clicked() && !app.locked {
+//		app.deleteProject()
+//	}
+//
+// It only tells: clicks and keys still reach the element, which the view
+// ignores while it is unavailable, and it does not dim it, which the view
+// styles itself if it wants. Assistive technology focuses it, but neither
+// presses nor edits it. Disabled does all of it at once: no clicks, no
+// focus, and half the opacity.
+func (_handle Element) AccessDisabled(off bool) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.AccessDisabled(off))
+}
+
 // AccessHidden leaves the element and those inside it out of what
 // assistive technology reads when hide is true, while they still show, as
 // HTML's aria-hidden does: none of them is in its tree, their text names
@@ -3658,6 +3719,25 @@ func (_handle Element) AttachedOrigin() Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.AttachedOrigin())
+}
+
+// AutoComplete tells assistive technology what the suggestions of a
+// text input or a combobox of your own complete as the user types, as
+// ARIA's aria-autocomplete: AutoCompleteList for a popup of the values
+// matching what was typed, which screen readers announce with the field
+// so that the user knows to look there, AutoCompleteInline for the text
+// completed in place. It only tells it: the view shows the suggestions
+// itself, as in ComboboxBase's popup. Combobox, Autocomplete, and a
+// TokenField with suggestions, tell AutoCompleteList themselves;
+// AutoCompleteNone takes it back.
+func (_handle Element) AutoComplete(kind AutoComplete) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.AutoComplete(kind))
 }
 
 // AutoFocus gives the element the keyboard focus in the frame it appears,
@@ -4319,6 +4399,21 @@ func (_handle Element) ContextMenu(build func(m *Menu)) Element {
 	return wrapElement(_node.ContextMenu(build))
 }
 
+// Controls tells assistive technology that the element controls the
+// content or the presence of target, as ARIA's aria-controls: the
+// region a disclosure button opens, or the list a filter's input
+// narrows. Screen readers offer to move to it. Call it once target is
+// built, once for each element it controls.
+func (_handle Element) Controls(target Element) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Controls(target.nodeFor(_ctx.rt)))
+}
+
 // CopyData sets what Copy, its shortcut and the context menu's put on
 // the clipboard for the selection of a Selectable container: fn gets its
 // parts, as SelectedTexts returns them, and returns the data, as a
@@ -4447,7 +4542,8 @@ func (_handle Element) Direction(d Direction) Element {
 
 // Disabled disables the element and those inside it when d is true: they
 // report no clicks, take no focus, and show at half their opacity, unless
-// DimDisabled turns that off.
+// DimDisabled turns that off. AccessDisabled keeps their clicks and their
+// focus, for what assistive technology must still reach.
 func (_handle Element) Disabled(d bool) Element {
 	_node := _handle.node()
 	if _node == nil {
@@ -4571,6 +4667,21 @@ func (_handle Element) DragEnded() (float32, float32, bool) {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.DragEnded()
+}
+
+// DragMissed reports, in the frame after, that the value the element
+// drags (Drag) was let go over no element taking it, and where, in the
+// window's coordinates: outside the window when it was let go past its
+// edge, as to tear a tab out into a window of its own. A drag given up,
+// with Escape, is not missed.
+func (_handle Element) DragMissed() (Point, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return *new(Point), false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.DragMissed()
 }
 
 // DragOffset returns where Draggable shows the element in this frame,
@@ -5205,6 +5316,21 @@ func (_handle Element) HandleTextInput(client TextInputClient) Element {
 	return wrapElement(_node.HandleTextInput(client))
 }
 
+// HasPopup tells assistive technology the kind of popup the element
+// opens, as a button opening a list of options (PopupListBox) or a menu
+// (PopupMenu), which Expanded says shows: screen readers read it with the
+// element ("pop-up button", "menu button") and offer to open it.
+// PopupNone takes it back.
+func (_handle Element) HasPopup(kind Popup) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.HasPopup(kind))
+}
+
 // Height sets the height in DIPs.
 func (_handle Element) Height(v float32) Element {
 	_node := _handle.node()
@@ -5260,6 +5386,34 @@ func (_handle Element) Highlighted() bool {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.Highlighted()
+}
+
+// HitTest sets where in its box the element takes the pointer: where fn
+// reports true for the pointer at (x, y), in the coordinates Draw paints
+// in, r being its box as Draw gets it. Elsewhere the pointer reaches what
+// is under it, as with PassThrough, so that a pie's segment, a map's
+// region or a ring takes a press, the hover and the cursor only where it
+// paints, as SVG's pointer-events: visiblePainted. The elements inside it
+// take the pointer as they would; fn runs as the pointer moves and
+// presses, on the window's thread, and only tests:
+//
+//	ring := func(r ui.Rect) *ui.Path {
+//		var p ui.Path
+//		cx, cy := r.X+r.W/2, r.Y+r.H/2
+//		return p.Circle(cx, cy, r.W/2).Circle(cx, cy, r.W/2-12).FillRule(ui.EvenOdd)
+//	}
+//	ui.Box(c).Size(120, 120).
+//		Draw(func(p *ui.Painter, r ui.Rect) { p.FillPath(ring(r), accent) }).
+//		HitTest(func(x, y float32, r ui.Rect) bool { return ring(r).Contains(x, y) }).
+//		OnClick(func() { … })
+func (_handle Element) HitTest(fn func(x float32, y float32, r Rect) bool) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.HitTest(fn))
 }
 
 // Hovered reports whether the pointer is over the element. While the
@@ -5341,6 +5495,29 @@ func (_handle Element) InView() bool {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.InView()
+}
+
+// InViewAmount reports whether at least amount of the element's area,
+// from 0 to 1, showed in the frame before, within the window and the
+// scroll containers and clips around it, grown by margin as InViewMargin
+// grows them: as IntersectionObserver's threshold, and Motion's amount
+// for whileInView and useInView. An impression counts once half of a
+// card shows with 0.5, an animation starts at a fifth of it with 0.2,
+// and 1 waits for all of it; 0 is InViewMargin. Its area is that of its
+// box as transforms move it, the box holding them as InView's clips do.
+//
+//	card := ui.Column(c).Key(ad.ID)
+//	if card.InViewAmount(0.5) {
+//		app.counted(ad.ID)
+//	}
+func (_handle Element) InViewAmount(amount float32, margin ...float32) bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.InViewAmount(amount, margin...)
 }
 
 // InViewMargin reports whether some of the element showed in the frame
@@ -6504,6 +6681,20 @@ func (_handle Element) PressedButton() (int, bool) {
 	return _node.PressedButton()
 }
 
+// PressedInside reports whether the pointer went down since the last
+// frame on the element, inside it, or in a popover attached to it, as
+// PressedOutside reports one outside. Unlike Pressed and Clicked, the
+// element does not take the pointer.
+func (_handle Element) PressedInside() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.PressedInside()
+}
+
 // PressedOutside reports whether the pointer went down since the last
 // frame outside the element: on neither it, nor what it holds, nor the
 // element it is attached to (AttachTo), nor the overlays attached to
@@ -6538,6 +6729,21 @@ func (_handle Element) PressedPointer() (PointerType, float32, bool) {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.PressedPointer()
+}
+
+// Pretty keeps the last line of each paragraph of the element's text from
+// holding a single word, as CSS's text-wrap: pretty does at least: the
+// line before gives it a word, and the lines before stay as they are. A
+// paragraph of body text then ends on more than one word, at no cost to
+// the rest of its lines; Balance balances them all instead.
+func (_handle Element) Pretty() Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Pretty())
 }
 
 // RadialGradient fills the element with a radial gradient, its colors
@@ -6651,6 +6857,21 @@ func (_handle Element) Role(r Role) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Role(r))
+}
+
+// RoleDescription tells assistive technology what to call the element's
+// role, in place of its own, as ARIA's aria-roledescription: "carousel"
+// for a group of slides, and "slide" for each. Screen readers read it
+// where they would read the role, so give it in the user's language, and
+// keep the role, which says how to use the element. "" reads the role.
+func (_handle Element) RoleDescription(s string) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.RoleDescription(s))
 }
 
 // Rotate rotates an element clockwise around its transform origin, which
@@ -7142,6 +7363,38 @@ func (_handle Element) SnapAlignY(a Align) Element {
 	return wrapElement(_node.SnapAlignY(a))
 }
 
+// Sort tells assistive technology the order a table's rows are sorted in
+// by the column whose header the element is (RoleColumnHeader), as ARIA's
+// aria-sort: for a sortable table of your own, whose headers show it.
+// Table's headers tell it from ListState.Sort and SortBy.
+func (_handle Element) Sort(dir SortDirection) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Sort(dir))
+}
+
+// SplitReset makes a double click on the divider of a Split put the first
+// pane at v, in the split's own unit: DIPs for Split and SplitVertical, a
+// percentage for SplitPercent and SplitVerticalPercent. A split without it
+// keeps its size on a double click. The value is kept even when the window
+// is too small to show it, so the pane takes it back when there is room
+// again.
+//
+//	ui.Split(c, &app.sidebar, app.files, app.editor).SplitReset(220)
+func (_handle Element) SplitReset(v float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.SplitReset(v))
+}
+
 // Spring returns a value following target with a spring, as AnimateTo
 // does with Animation{Spring: options}: Smooth's spring without options.
 func (_handle Element) Spring(key any, target float32, options ...SpringOptions) float32 {
@@ -7412,6 +7665,26 @@ func (_handle Element) TextServices(fn func() string) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.TextServices(fn))
+}
+
+// TextShadow casts a shadow of the element's text, as CSS's text-shadow:
+// the shapes of its glyphs, offset by x and y DIPs, blurred by blur, in c,
+// under the glyphs and their strokes, as a chart's labels over its bars
+// or a caption over a photo take one to stand out. The text of the
+// elements inside takes it too, and theirs where they set one; a
+// transparent c casts none, where those around it cast one. A span's
+// Shadow sets one for its text. The shadow of color glyphs, as emoji, is
+// that of their pixels' shape; underlines and strikethroughs cast none.
+//
+//	ui.Text(c, "Golden hour").TextColor(ui.RGB(255, 255, 255)).TextShadow(0, 1, 4, ui.RGBA(0, 0, 0, 0.6))
+func (_handle Element) TextShadow(x float32, y float32, blur float32, c Color) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.TextShadow(x, y, blur, c))
 }
 
 // TextStroke strokes the outlines of the glyphs of text width DIPs wide

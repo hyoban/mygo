@@ -15,6 +15,11 @@ type AccessTree struct {
 	// read: what an alert (RoleAlert) shows as it appears or changes, as
 	// ARIA's assertive live regions.
 	Alerts []string
+	// Selected is the word for a chosen cell of a grid in the window's
+	// language ("selected"), given while a cell says whether it is
+	// chosen, for a bridge whose screen reader reads no chosen state of
+	// cells to say with its name.
+	Selected string
 }
 
 // AccessNode is an element of an AccessTree.
@@ -54,6 +59,9 @@ type AccessNode struct {
 	// Current says which item the element is the current one of, as the
 	// page the user is on.
 	Current AccessCurrent
+	// AutoComplete says what the suggestions of a text field or a combo
+	// box complete as the user types, as ARIA's aria-autocomplete.
+	AutoComplete AccessAutoComplete
 	// PosInSet is the place of an item in its set, from 1, and SetSize
 	// the size of the set, 0 when not given: a list's rows say which of
 	// all they are, whether or not the others are built, and the list how
@@ -61,6 +69,17 @@ type AccessNode struct {
 	PosInSet, SetSize int
 	// Actions are the actions the element takes in AccessAction events.
 	Actions AccessActions
+	// RoleDescription is what screen readers read for the element's role
+	// in place of its own, as "carousel" for a group or "slide" for a tab
+	// panel: ARIA's aria-roledescription. "" reads the role.
+	RoleDescription string
+	// Controls are the IDs of the nodes whose content or presence the
+	// element controls, as the region a disclosure button opens: ARIA's
+	// aria-controls.
+	Controls []uint64
+	// HasPopup is the kind of popup the element opens, as ARIA's
+	// aria-haspopup.
+	HasPopup AccessPopup
 	// WebView is the web view whose page the node stands for, if any
 	// (Surface.NewWebView): assistive technology finds the page's elements
 	// inside it, and it has no children of its own.
@@ -258,7 +277,44 @@ const (
 	// as a region loading, which assistive technology waits for before
 	// reading it: ARIA's aria-busy.
 	AccessBusy
+	// AccessSortOther is set on the header of the column a table's rows
+	// are sorted by in an order neither ascending nor descending.
+	AccessSortOther
 )
+
+// AccessPopup is the kind of popup an element opens, as ARIA's
+// aria-haspopup says.
+type AccessPopup uint8
+
+const (
+	// PopupNone opens no popup.
+	PopupNone AccessPopup = iota
+	// PopupMenu opens a menu, aria-haspopup="menu" (or "true").
+	PopupMenu
+	// PopupListBox opens a list of options, PopupTree a tree, PopupGrid
+	// a grid, as a calendar's, and PopupDialog a dialog.
+	PopupListBox
+	PopupTree
+	PopupGrid
+	PopupDialog
+)
+
+// String returns the value of aria-haspopup that p is, "" for PopupNone.
+func (p AccessPopup) String() string {
+	switch p {
+	case PopupMenu:
+		return "menu"
+	case PopupListBox:
+		return "listbox"
+	case PopupTree:
+		return "tree"
+	case PopupGrid:
+		return "grid"
+	case PopupDialog:
+		return "dialog"
+	}
+	return ""
+}
 
 // AccessCurrent is the item an element is the current one of among those
 // around it, as ARIA's aria-current says.
@@ -297,6 +353,37 @@ func (c AccessCurrent) String() string {
 		return "date"
 	case CurrentTime:
 		return "time"
+	}
+	return ""
+}
+
+// AccessAutoComplete is what the suggestions of a text field complete as
+// the user types, as ARIA's aria-autocomplete says.
+type AccessAutoComplete uint8
+
+const (
+	// AutoCompleteNone suggests nothing as the user types.
+	AutoCompleteNone AccessAutoComplete = iota
+	// AutoCompleteInline completes the text in place, the rest of the
+	// value inserted after the caret and selected.
+	AutoCompleteInline
+	// AutoCompleteList shows a popup of the values that complete it.
+	AutoCompleteList
+	// AutoCompleteBoth shows the popup and completes the text in place
+	// with the option the arrows are on.
+	AutoCompleteBoth
+)
+
+// String returns the value of aria-autocomplete that a is, "" for
+// AutoCompleteNone.
+func (a AccessAutoComplete) String() string {
+	switch a {
+	case AutoCompleteInline:
+		return "inline"
+	case AutoCompleteList:
+		return "list"
+	case AutoCompleteBoth:
+		return "both"
 	}
 	return ""
 }
