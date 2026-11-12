@@ -43,6 +43,38 @@ type EditorOptions struct {
 	// quotations. What it leaves zero, and all of it when nil, takes the
 	// window theme's DefaultTheme.
 	Theme *Theme
+	// Menu builds the context menu in place of the editor's own, as
+	// Element.ContextMenu's function does: an app with a menu of its own
+	// opens it there, and adds nothing to show none of the system's.
+	Menu func(m *ui.Menu)
+	// OnKey is asked about a key pressed in the editor before the editor
+	// acts on it, as an app's popup over the text (a list of completions)
+	// takes the arrows, Enter and Escape: true takes the key, and the
+	// editor does nothing with it.
+	OnKey func(key ui.Key, mods ui.Modifiers) bool
+	// Spans is given the spans paragraph p (from 0) of style is drawn as
+	// and returns them as they are to be drawn: split, colored or spaced
+	// otherwise, their text the same, as an app colors a block of code by
+	// its language or spaces the letters. Change SpansVersion when what
+	// it does changes, for the paragraphs to be laid out again.
+	Spans        func(p int, style ParagraphStyle, spans []ui.Span) []ui.Span
+	SpansVersion int
+	// Space is given paragraph p (from 0) and returns the room in DIPs to
+	// leave above it, more than the theme's, as a list opens a place
+	// where an item dragged would go. It is asked as the paragraphs are
+	// laid out, each frame for those in view, so that what it returns can
+	// change from frame to frame and the paragraphs below move with it.
+	// While the editor has the keyboard and is scrolled down its text,
+	// room that opens between the top of the view and the caret moves the
+	// paragraphs above it up instead, so that the line being typed stays.
+	Space func(p int) float32
+	// NoScrollbar draws no scroll bar of the editor's own, and a press
+	// where it would be goes to the text: an app that makes the editor as
+	// tall as its text, and scrolls it with a page around it, shows the
+	// page's bar alone, even in a frame where the editor's height falls
+	// short of its text and it scrolls a little itself. The editor still
+	// scrolls to keep the caret in view, and with the wheel.
+	NoScrollbar bool
 }
 
 // Editor creates an editor of doc's attributed text, as NSTextView edits
@@ -100,12 +132,18 @@ type view struct {
 	// the room around the text in the element.
 	width, viewH float32
 	// laidLook is the look the layouts were made in.
-	laidLook    lookKey
-	padX, padY  float32
-	rect        ui.Rect
-	scroll      float64
+	laidLook   lookKey
+	padX, padY float32
+	rect       ui.Rect
+	scroll     float64
+	// The view keeps its place by paragraph anchor: its top is anchorOff
+	// below the anchor's, or, while anchorText, the view keeps the
+	// anchor's first line where it was when its text was at anchorY in
+	// the content (the caret's paragraph, while the editor is focused).
 	anchor      int
 	anchorOff   float64
+	anchorText  bool
+	anchorY     float64
 	reveal      bool
 	first, last int
 	// The selection, in runes: anchor and caret, and the caret's visual
@@ -125,17 +163,21 @@ type view struct {
 	coalesce bool
 	// The pointer: a drag selecting by runes, words or paragraphs, from
 	// where it started; a scroll bar's thumb held; a link pressed.
-	dragging  bool
-	dragUnit  int
-	dragStart [2]int
-	pressMods ui.Modifiers
-	pressLink string
+	dragging   bool
+	dragUnit   int
+	dragStart  [2]int
+	pressMods  ui.Modifiers
+	pressLink  string
+	pressPoint ui.Point
 	// cursor is the pointer's shape where it hovers: an arrow over task
 	// boxes and the scroll bar, a hand over links, an I-beam over text.
-	cursor     ui.Cursor
-	thumb      bool
-	inView     bool // the pointer is over the editor, which shows the scroll bar
-	thumbGrab  float32
+	cursor    ui.Cursor
+	thumb     bool
+	inView    bool // the pointer is over the editor, which shows the scroll bar
+	thumbGrab float32
+	// barStyle is how the scroll bar looks, the theme's as of the last
+	// paint.
+	barStyle   ui.ScrollbarStyle
 	focused    bool
 	blinkStart time.Time
 	services   ui.Services
@@ -148,6 +190,13 @@ type view struct {
 	// placed is room for the boxes of the paragraphs painted, which moved
 	// compares with those the app read.
 	placed []ParagraphBox
+	// read is set as the app reads this editor's paragraphs in view
+	// (VisibleParagraphs), which readBoxes holds, and readCaret as it reads
+	// its caret (CaretRect), which readCaretRect holds: for its next paint
+	// to tell whether it moved them. Under the document's lock.
+	read, readCaret bool
+	readBoxes       []ParagraphBox
+	readCaretRect   ui.Rect
 }
 
 type editMode uint8
@@ -206,9 +255,14 @@ func build(c *ui.Context, doc *Document, options []EditorOptions, styled bool) u
 		doc.lock()
 		v.selAnchor, v.caret = doc.anchor, doc.caret
 		v.selVersion = doc.selVersion
-		doc.shownIn = weak.Make(v)
 		doc.mu.Unlock()
 	}
+	// the editor built last shows the document for what the app reads
+	// next (VisibleParagraphs, CaretRect): with two editors of one
+	// document, each one's are read right after it is built
+	doc.lock()
+	doc.shownIn = weak.Make(v)
+	doc.mu.Unlock()
 	v.opts = EditorOptions{}
 	if len(options) > 0 {
 		v.opts = options[0]
@@ -240,7 +294,11 @@ func build(c *ui.Context, doc *Document, options []EditorOptions, styled bool) u
 	e.HandleInput(v.input)
 	e.Cursor(v.cursor)
 	e.Draw(v.paint)
-	e.ContextMenu(v.menu)
+	if v.opts.Menu != nil {
+		e.ContextMenu(v.opts.Menu)
+	} else {
+		e.ContextMenu(v.menu)
+	}
 	if styled {
 		e.FocusRing(false)
 	}
@@ -302,6 +360,9 @@ func (v *view) lockedSync() (change, bool) {
 		if moved && v.version != 0 && len(v.paras) == v.shown.ParagraphCount() {
 			v.replaced(c, d.text)
 		} else {
+			if v.anchorText {
+				v.setScroll(v.scroll)
+			}
 			v.shown = d.text
 			v.paras = make([]paraView, d.text.ParagraphCount())
 			v.laid = 0
@@ -334,6 +395,7 @@ func (v *view) lockedSync() (change, bool) {
 func (v *view) replaced(c change, now Text) {
 	pa, pz := v.shown.paraAt(c.start), v.shown.paraAt(c.oldEnd)
 	npz := now.paraAt(c.newEnd)
+	stay := v.scroll - v.hs.top(pa)
 	for _, p := range v.paras[pa : pz+1] {
 		if p.layout != nil {
 			v.laid--
@@ -357,6 +419,10 @@ func (v *view) replaced(c change, now Text) {
 	switch {
 	case v.anchor > pz:
 		v.anchor += npz - pz
+	case v.anchor > pa && v.anchorText:
+		// The caret's paragraph, joined to one above or replaced with it:
+		// the view stays.
+		v.anchor, v.anchorOff, v.anchorText = pa, stay, false
 	case v.anchor > pa:
 		v.anchor, v.anchorOff = pa, 0
 	}
@@ -407,10 +473,12 @@ type lookKey struct {
 	base  ui.Font
 	theme Theme
 	tags  bool
+	spans bool
+	ver   int
 }
 
 func (v *view) lookKey() lookKey {
-	return lookKey{base: v.base, theme: v.look.Theme, tags: v.look.tagStyle != nil}
+	return lookKey{base: v.base, theme: v.look.Theme, tags: v.look.tagStyle != nil, spans: v.opts.Spans != nil, ver: v.opts.SpansVersion}
 }
 
 // heading returns the style of headings of level, from 1.
@@ -484,6 +552,9 @@ func (v *view) space(p int, st ParagraphStyle) (above, below float32) {
 		if p+1 >= len(v.paras) || !v.para(p+1).style.CodeBlock {
 			below = look.size * look.CodeBlockPadding[1]
 		}
+	}
+	if v.opts.Space != nil {
+		above += max(0, v.opts.Space(p))
 	}
 	return above, below
 }
@@ -611,6 +682,9 @@ func (v *view) paraLayout(p int) *paraView {
 	}
 	if compose != "" {
 		spans = append(spans, v.look.span(compose, typing, para.style))
+	}
+	if v.opts.Spans != nil {
+		spans = v.opts.Spans(p, para.style, spans)
 	}
 	// The indent is on the side the paragraph starts at, the right of one
 	// reading right to left.
@@ -750,6 +824,37 @@ func (v *view) setScroll(y float64) {
 	v.scroll = y
 	v.anchor = v.hs.at(y)
 	v.anchorOff = y - v.hs.top(v.anchor)
+	v.anchorText = false
+}
+
+// scrollTo scrolls the content to y, kept between its ends, and reports
+// whether it moved.
+func (v *view) scrollTo(y float64) bool {
+	y = max(0, min(y, v.hs.top(len(v.paras))-float64(v.viewH)))
+	if y == v.scroll {
+		return false
+	}
+	v.setScroll(y)
+	return true
+}
+
+// anchorCaret keeps the place by the caret's paragraph while the editor
+// has the keyboard and that paragraph is in view, as browsers prefer the
+// focused editable element to keep in place (CSS Scroll Anchoring's
+// priority candidates): what grows between the top of the view and the
+// caret, room an app leaves with Space or an edit, moves the text above
+// it up, and the line being typed stays. An editor scrolled to its top
+// stays there, as one that shows all of its text does.
+func (v *view) anchorCaret() {
+	if !v.focused || v.opts.ReadOnly || v.scroll <= 0 {
+		return
+	}
+	p := v.shown.paraAt(v.caret)
+	if p < v.first || p > v.last {
+		return
+	}
+	_, y := v.origin(p)
+	v.anchor, v.anchorText, v.anchorY = p, true, y
 }
 
 // layout lays out the paragraphs in view of a content box w×h, and those
@@ -789,6 +894,7 @@ func (v *view) layout(w, h float32) {
 		v.setScroll(s)
 		v.place(h)
 	}
+	v.anchorCaret()
 	if v.laid > maxLaid+v.last-v.first {
 		v.forget()
 	}
@@ -800,12 +906,20 @@ func (v *view) place(h float32) {
 	n := len(v.paras)
 	v.anchor = max(0, min(v.anchor, n-1))
 	v.paraLayout(v.anchor)
+	// top is where the view's top is in the content. Kept by the anchor's
+	// text, it moves as much as that text did since it was anchored, which
+	// is nothing at all when nothing moved it.
+	top := func() float64 { return v.hs.top(v.anchor) + v.anchorOff }
+	if v.anchorText {
+		above, _ := v.space(v.anchor, v.para(v.anchor).style)
+		top = func() float64 { return v.scroll + (v.hs.top(v.anchor) + float64(above) - v.anchorY) }
+	}
 	v.first = v.anchor
-	for v.first > 0 && v.hs.top(v.anchor)+v.anchorOff-v.hs.top(v.first) < 0 {
+	for v.first > 0 && top()-v.hs.top(v.first) < 0 {
 		v.first--
 		v.paraLayout(v.first)
 	}
-	v.setScroll(max(0, v.hs.top(v.anchor)+v.anchorOff))
+	v.setScroll(max(0, top()))
 	y := v.hs.top(v.first)
 	p := v.first
 	for ; p < n; p++ {
@@ -852,18 +966,156 @@ func (d *Document) VisibleParagraphs() []ParagraphBox {
 		boxes = v.boxes(nil)
 	}
 	d.lock()
-	d.read = true
-	d.boxes = append(d.boxes[:0], boxes...)
+	if v != nil && v.doc == d {
+		v.read = true
+		v.readBoxes = append(v.readBoxes[:0], boxes...)
+	} else {
+		d.readNone = true
+	}
 	d.mu.Unlock()
 	return boxes
 }
 
+// CaretRect returns the caret of the editor showing the document, where
+// the editor paints it in this frame, focused or not: a line as high as
+// the caret's, in DIPs from the top left of the editor's element,
+// scrolled. Place a popup at its bottom, as completions under what is
+// typed after a "/" or an "@". A frame in which the caret moves from where
+// this said, as the user types, the editor scrolls or its width changes,
+// builds another, as one that moves the paragraphs VisibleParagraphs gave
+// does, so that the popup follows. ok is false until an editor showed the
+// document, and while the caret is scrolled out of view.
+//
+// Call it on the main thread, as the view builds.
+func (d *Document) CaretRect() (r ui.Rect, ok bool) {
+	d.lock()
+	v := d.shownIn.Value()
+	d.mu.Unlock()
+	if v != nil && v.doc == d && v.width > 0 {
+		v.sync()
+		v.layout(v.width, v.viewH)
+		r, ok = v.caretRect()
+	}
+	d.lock()
+	if v != nil && v.doc == d {
+		v.readCaret, v.readCaretRect = true, r
+	} else {
+		d.readNone = true
+	}
+	d.mu.Unlock()
+	return r, ok
+}
+
+// ScrollBy scrolls the editor showing the document by dy DIPs, down when
+// dy is positive, as far as its text goes, and reports whether it moved:
+// an app that drags something of its own over the text (a block, by a
+// handle beside it) scrolls the editor near its top and bottom edges, as
+// the editor does while the user drags a selection there, and stops at an
+// end. VisibleParagraphs and CaretRect read after it give where it
+// scrolled to, and it asks for a frame to paint it.
+//
+// Call it on the main thread, as the view builds or in an event's
+// handler. Before an editor showed the document, as in the first frame,
+// it does nothing.
+func (d *Document) ScrollBy(dy float32) bool {
+	v := d.laidOut()
+	if v == nil || !v.scrollTo(v.scroll+float64(dy)) {
+		return false
+	}
+	v.services.Invalidate()
+	return true
+}
+
+// ScrollToParagraph scrolls the editor showing the document to paragraph i
+// (from 0), lined up as align says, as ui.Element's ScrollIntoView lines
+// an element up: ui.ScrollNearest scrolls as little as shows it, and
+// ui.ScrollStart, ui.ScrollCenter and ui.ScrollEnd line its start, center
+// or end up with the editor's. Its box is that of its lines, as in
+// VisibleParagraphs, without the room above and below it. It goes no
+// further than the text does, and an i out of range is the first or the
+// last paragraph. It leaves the caret where it is.
+//
+// Call it on the main thread, as the view builds or in an event's
+// handler. Before an editor showed the document, as in the first frame,
+// it does nothing.
+func (d *Document) ScrollToParagraph(i int, align ui.ScrollAlign) {
+	if align > ui.ScrollEnd {
+		panic("richtext: ScrollToParagraph alignments are ui.ScrollNearest, ui.ScrollStart, ui.ScrollCenter or ui.ScrollEnd")
+	}
+	v := d.laidOut()
+	if v == nil || len(v.paras) == 0 {
+		return
+	}
+	i = max(0, min(i, len(v.paras)-1))
+	h := float64(v.viewH)
+	// The paragraphs above it that the view may show are laid out first,
+	// for their heights, as revealing the caret does.
+	pv := v.paraLayout(i)
+	for q, room := i-1, float64(pv.h); q >= 0 && room < h; q-- {
+		room += float64(v.paraLayout(q).h)
+	}
+	_, y := v.origin(i)
+	size := float64(pv.h - pv.space)
+	to := v.scroll
+	switch align {
+	case ui.ScrollStart:
+		to = y
+	case ui.ScrollCenter:
+		to = y + size/2 - h/2
+	case ui.ScrollEnd:
+		to = y + size - h
+	default:
+		// What is taller than the view shows from its start.
+		start, end := y-v.scroll, y+size-v.scroll
+		switch {
+		case start < 0:
+			to = y
+		case end > h:
+			to = v.scroll + min(end-h, start)
+		}
+	}
+	if v.scrollTo(to) {
+		v.services.Invalidate()
+	}
+}
+
+// laidOut returns the editor showing the document, in step with it and
+// laid out as it was last painted, or nil before one painted it.
+func (d *Document) laidOut() *view {
+	d.lock()
+	v := d.shownIn.Value()
+	d.mu.Unlock()
+	if v == nil || v.doc != d || v.width <= 0 {
+		return nil
+	}
+	v.sync()
+	v.layout(v.width, v.viewH)
+	return v
+}
+
+// caretRect returns where the editor paints the caret, in its element,
+// and whether that is in view.
+func (v *view) caretRect() (ui.Rect, bool) {
+	if len(v.paras) == 0 {
+		return ui.Rect{}, false
+	}
+	x, y, h := v.caretAt(v.caret, v.composeCaret, v.affinity)
+	r := ui.Rect{X: v.padX + x, Y: v.padY + float32(y-v.scroll), W: 1, H: h}
+	return r, r.Y+r.H > 0 && r.Y < v.rect.H
+}
+
 // boxes appends the boxes of the paragraphs in view to out.
 func (v *view) boxes(out []ParagraphBox) []ParagraphBox {
-	for i := v.first; i <= v.last && i < len(v.paras); i++ {
+	if v.first > v.last || v.first >= len(v.paras) {
+		return out
+	}
+	// Each start is counted on from the one before, as paint does: found
+	// from the start of the text, each cost as much as the text is long.
+	ps := v.shown.paraStart(v.first)
+	for i := v.first; i <= v.last && i < len(v.paras); i, ps = i+1, ps+v.para(i).n+1 {
 		pv := v.paraLayout(i)
 		_, y := v.origin(i)
-		out = append(out, ParagraphBox{Index: i, Start: v.shown.paraStart(i), Top: v.padY + float32(y-v.scroll), Height: pv.h - pv.space})
+		out = append(out, ParagraphBox{Index: i, Start: ps, Top: v.padY + float32(y-v.scroll), Height: pv.h - pv.space})
 	}
 	return out
 }
@@ -874,15 +1126,24 @@ func (v *view) boxes(out []ParagraphBox) []ParagraphBox {
 func (v *view) moved() {
 	d := v.doc
 	d.lock()
-	read, was := d.read, d.boxes
-	d.read = false
-	d.mu.Unlock()
-	if !read {
-		return
+	read, was := v.read, v.readBoxes
+	readCaret, caretWas := v.readCaret, v.readCaretRect
+	v.read, v.readCaret = false, false
+	if d.readNone { // read before any editor showed it: what this one placed is news
+		d.readNone, read, was = false, true, nil
 	}
-	v.placed = v.boxes(v.placed[:0])
-	if !slices.Equal(v.placed, was) {
-		v.services.Invalidate()
+	d.mu.Unlock()
+	if read {
+		v.placed = v.boxes(v.placed[:0])
+		if !slices.Equal(v.placed, was) {
+			v.services.Invalidate()
+			return
+		}
+	}
+	if readCaret {
+		if r, _ := v.caretRect(); r != caretWas {
+			v.services.Invalidate()
+		}
 	}
 }
 

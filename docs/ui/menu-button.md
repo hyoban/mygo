@@ -41,7 +41,9 @@ ui.Button(c, "").Label("More").Children(func() { ui.Icon(c, dots) }).Menu(func(m
 ```
 
 In a [toolbar](toolbar.md), a menu button takes no face of its own until
-hovered.
+hovered. For a button that does an action of its own beside a menu of
+related ones, as Save beside Save As…, use a [split
+button](split-button.md).
 
 ## Drawn in the window
 
@@ -53,7 +55,9 @@ an app's own design, the system's menu is the one that looks out of place,
 and a right-click's drawn menu and a ⋯ button's system menu, side by
 side, look like two menus. `Element.PopoverMenuButton` gives such a menu to
 any button, as `Element.Menu` does, and takes the same function as
-`PopoverMenu`, so one function serves both:
+`PopoverMenu`, so one function serves both. To draw every menu of a
+window so, `Menu`'s included, see [every menu of a
+window](context-menu.md#every-menu-of-a-window):
 
 ```go
 menu := func(m *ui.Menu) {
@@ -86,14 +90,57 @@ Left open and close submenus, Enter and Space choose, and Escape, Tab and
 presses outside close it. A choice reports `Chosen` as from
 `PopoverMenu`.
 
+`ui.PopoverMenuButtonOptions`, after the function, place the menu
+elsewhere and let the app open and close it. `At` and `Self` attach the
+menu as [`AttachTo`](overlays.md#your-own-overlays) does, its point
+`Self` on the button's point `At`: `AnchorBottomEnd` and `AnchorTopEnd`
+line it up with the
+button's end, for a ⋯ button at the window's end, `AnchorTopStart` and
+`AnchorBottomStart` put it above, and `AnchorTopEnd` and `AnchorTopStart`
+after it. It still goes to the other side where the window has no room.
+`Open`, a `*bool`, is whether the menu shows, as `MenuBase`'s: the button
+sets it as the user opens and closes the menu, and the app sets it to open
+the menu, or to close it, as when what it acts on goes away in the
+background:
+
+```go
+more.PopoverMenuButton(menu, ui.PopoverMenuButtonOptions{
+	At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd, Open: &app.moreOpen,
+})
+
+// Later, on an event from elsewhere, before the window updates:
+app.moreOpen = false
+```
+
+A menu the app opens takes the focus, with no item highlighted, and gives
+it back to the element that had it as it closes. A window shows one drawn
+menu at a time: another opening closes it, setting `Open` to false.
+
+`Panel` styles the menu's panel, and each submenu's, after the theme's
+look, for a menu that wears an app's own surface rather than the theme's
+`Background`, `Border` and shadow. Its background, border, radius and
+padding take the theme's place; `Shadow` adds a shadow, so `NoShadow`
+first takes off the theme's. The menu keeps its place, its gap from the
+button and its items' look:
+
+```go
+more.PopoverMenuButton(menu, ui.PopoverMenuButtonOptions{
+	Panel: func(panel ui.Element) {
+		panel.Background(app.menuColor).Border(1, app.line).Radius(12).
+			NoShadow().Shadow(0, 18, 50, 0, ui.RGBA(0, 0, 0, 0.45))
+	},
+})
+```
+
 Assistive technology sees the menu button, expanded while its menu
 shows, and the menu with its menu items, check box items and radio items,
 as it sees the system's. In a toolbar's overflow menu, choosing the button
 opens its drawn menu below the overflow button.
 
 A drawn menu's items are elements: in tests, `tt.Click` on the button
-opens it, `tt.HasText` finds its items and `tt.Click` chooses one, while
-`tt.Menu` lists only the system's menus.
+opens it, `tt.HasText` finds its items and `tt.Click` chooses one.
+`tt.Menu`, `tt.ChooseMenuItem` and `tt.CloseMenu` work on it as on the
+system's, so a test passes with either.
 
 ## Without a look
 

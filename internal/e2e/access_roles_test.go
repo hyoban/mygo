@@ -12,7 +12,7 @@ import (
 )
 
 // landmarksAndLiveRegions shows a region, a search landmark, an article,
-// a log, a timer, an alert, a toolbar's rule and a table's row header, labelled to be found but for
+// a log, a timer, an alert, a tab panel, the main, banner, content information and complementary landmarks, a toolbar's rule and a table's row header, labelled to be found but for
 // the rule, which is the toolbar's only child but its buttons.
 func landmarksAndLiveRegions(frames *atomic.Int32) func(c *ui.Context) {
 	return func(c *ui.Context) {
@@ -41,6 +41,21 @@ func landmarksAndLiveRegions(frames *atomic.Int32) func(c *ui.Context) {
 				ui.Divider(c).Role(ui.RoleSeparator)
 				ui.Button(c, "Left")
 			})
+			ui.Row(c).Role(ui.RoleBanner).Label("Top bar").Children(func() {
+				ui.Text(c, "Mail")
+			})
+			ui.Column(c).Role(ui.RoleMain).Label("Messages area").Children(func() {
+				ui.Text(c, "Hello")
+			})
+			ui.Column(c).Role(ui.RoleComplementary).Label("Folders").Children(func() {
+				ui.Text(c, "Inbox")
+			})
+			ui.Row(c).Role(ui.RoleContentInfo).Label("Footer").Children(func() {
+				ui.Text(c, "3 unread")
+			})
+			ui.Column(c).Role(ui.RoleTabPanel).Label("Settings panel").Children(func() {
+				ui.Text(c, "Volume")
+			})
 			ui.Column(c).Role(ui.RoleTable).Label("Prices").Children(func() {
 				ui.Row(c).Role(ui.RoleRow).Children(func() {
 					ui.Text(c, "Apples").Role(ui.RoleRowHeader)
@@ -66,11 +81,52 @@ func TestAccessLandmarksAndLiveRegions(t *testing.T) {
 	want := map[string]map[string]string{
 		"darwin": {"Activity": "AXGroup/AXLandmarkRegion", "Site search": "AXGroup/AXLandmarkSearch",
 			"Post by Ann": "AXGroup/AXDocumentArticle", "Messages": "AXGroup/AXApplicationLog", "Time left": "AXGroup/AXApplicationTimer",
-			"Error": "AXGroup/AXApplicationAlert", "": "AXSplitter", "Apples": "AXCell"},
+			"Error": "AXGroup/AXApplicationAlert", "": "AXSplitter", "Apples": "AXCell", "Settings panel": "AXGroup",
+			"Top bar": "AXGroup/AXLandmarkBanner", "Messages area": "AXGroup/AXLandmarkMain", "Folders": "AXGroup/AXLandmarkComplementary", "Footer": "AXGroup/AXLandmarkContentInfo"},
 		"linux": {"Activity": "landmark", "Site search": "landmark", "Post by Ann": "article", "Messages": "log", "Time left": "timer", "Error": "notification", "": "separator",
-			"Apples": "row header"},
+			"Apples": "row header", "Settings panel": "scroll pane",
+			"Top bar": "landmark", "Messages area": "landmark", "Folders": "landmark", "Footer": "landmark"},
 		"windows": {"Activity": "Group", "Site search": "Group", "Post by Ann": "Group", "Messages": "Group", "Time left": "Group", "Error": "Group", "": "Separator",
-			"Apples": "HeaderItem"},
+			"Apples": "HeaderItem", "Settings panel": "Pane",
+			"Top bar": "Group", "Messages area": "Group", "Folders": "Group", "Footer": "Group"},
+	}[runtime.GOOS]
+	if want == nil {
+		t.Skipf("no roles to expect on %s", runtime.GOOS)
+	}
+	for label, role := range want {
+		eventually(t, label+" as "+role, func() bool {
+			nodes, _ := accessibility(w)
+			for _, n := range nodes {
+				if n.label == label && n.role == role {
+					return true
+				}
+			}
+			return false
+		})
+	}
+}
+
+// TestAccessDeletionInsertion reads, as screen readers do, the roles
+// Core-AAM gives ARIA's deletion and insertion, an old price struck out
+// and the new one, on each platform.
+func TestAccessDeletionInsertion(t *testing.T) {
+	var frames atomic.Int32
+	view := func(c *ui.Context) {
+		frames.Add(1)
+		ui.Row(c).Fill().Padding(20).Gap(6).Children(func() {
+			ui.Text(c, "$40").Strikethrough().Role(ui.RoleDeletion)
+			ui.Text(c, "$30").Role(ui.RoleInsertion)
+		})
+	}
+	w := newWindow(t, mygo.WindowOptions{Title: "Deletion and insertion", Width: 300, Height: 200, Content: ui.View(view)})
+	eventually(t, "a frame", func() bool { return frames.Load() > 0 })
+	if _, ok := accessibility(w); !ok {
+		t.Skip("accessibility automation not available on this platform")
+	}
+	want := map[string]map[string]string{
+		"darwin":  {"$40": "AXGroup/AXDeleteStyleGroup", "$30": "AXGroup/AXInsertStyleGroup"},
+		"linux":   {"$40": "content deletion", "$30": "content insertion"},
+		"windows": {"$40": "Text", "$30": "Text"},
 	}[runtime.GOOS]
 	if want == nil {
 		t.Skipf("no roles to expect on %s", runtime.GOOS)

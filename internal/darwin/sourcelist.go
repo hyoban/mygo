@@ -584,7 +584,7 @@ func (c *sourceCell) layout(v id) {
 		// The headings' badges end where the rows' do, which AppKit lays
 		// out narrower than its headings.
 		if end := c.list.cellsEnd; end > 0 {
-			at := msgRectToView(v, sel("convertRect:toView:"), b, c.list.outline).Origin.X
+			at := msgConvertRectView(v, sel("convertRect:toView:"), b, c.list.outline).Origin.X
 			right = min(w, end-at)
 		}
 	}
@@ -647,7 +647,7 @@ func (c *sourceCell) layout(v id) {
 // rowsEnd notes where the cell v, of a row that is not a heading, ends in
 // the outline view, laying the headings out anew where it moved.
 func (l *sourceList) rowsEnd(v id, bounds NSRect) {
-	r := msgRectToView(v, sel("convertRect:toView:"), bounds, l.outline)
+	r := msgConvertRectView(v, sel("convertRect:toView:"), bounds, l.outline)
 	end := r.Origin.X + r.Size.Width
 	if end == l.cellsEnd {
 		return

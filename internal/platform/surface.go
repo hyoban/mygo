@@ -111,6 +111,18 @@ type GlassPlacement struct {
 	Tint *Color
 }
 
+// ViewSurface is a Surface that shows views of the platform's own under
+// it, as it shows web views: those of native modules (package native),
+// shown with ui.NativeView. macOS's surfaces are.
+type ViewSurface interface {
+	// EmbedView puts view, an NSView on macOS, under the surface, hidden
+	// until PlaceWebViews shows it as it shows a web view. The WebView it
+	// returns stands for it there; of its Page, only what concerns a view
+	// applies (Focus, TabInto, Close, which takes the view out of the
+	// window and lets go of it). The surface keeps view while it shows it.
+	EmbedView(view uintptr) (WebView, error)
+}
+
 // GlassSurface is a Surface that draws the system's glass under its
 // content, as macOS 26's NSGlassEffectView does, where the content leaves a
 // hole.
@@ -297,6 +309,15 @@ const (
 	// its press's.
 	PointerDown
 	PointerUp
+	// PointerCancel reports that the system ended the pointer's press
+	// without a release, as Pointer Events' pointercancel: every button
+	// held is let go of, and no PointerUp follows for them. The content
+	// commits nothing a release would. Backends send it when they lose the
+	// press to the system (a browser's pointercancel, a window losing the
+	// mouse capture or a pointer grab while a button is down, a menu's
+	// loop taking the release), and the content ignores one while nothing
+	// is pressed.
+	PointerCancel
 	// PointerLeave reports the pointer left the surface.
 	PointerLeave
 	// PointerScroll scrolls by DX, DY DIPs at X, Y: positive DY moves the

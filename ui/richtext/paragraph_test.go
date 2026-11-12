@@ -325,13 +325,19 @@ func TestVisibleParagraphs(t *testing.T) {
 	if last := (*boxes)[len(*boxes)-1]; last.Index != 199 {
 		t.Fatalf("revealing the end, the last paragraph in view is %d", last.Index)
 	}
-	// An edit above moves the paragraphs down.
+	// An edit above, in the editor that has the keyboard, keeps the
+	// caret's line where it is: the paragraphs from the edit's down to the
+	// caret's stay, and those above them move up.
 	first := (*boxes)[1]
 	doc.Edit(func(e *Edit) { e.ReplaceString(first.Start, first.Start, "New\n", Attributes{}) })
 	tt.Frame()
 	check("edited")
-	if (*boxes)[1].Start != first.Start || (*boxes)[2].Start != first.Start+4 {
-		t.Fatalf("after a paragraph inserted at %d, boxes %v", first.Start, (*boxes)[:3])
+	moved := slices.IndexFunc(*boxes, func(b ParagraphBox) bool { return b.Start == first.Start+4 })
+	if moved < 0 || math.Abs(float64((*boxes)[moved].Top-first.Top)) > 0.01 {
+		t.Fatalf("after a paragraph inserted at %d at %v, boxes %v", first.Start, first.Top, (*boxes)[:3])
+	}
+	if moved > 0 && (*boxes)[moved-1].Start != first.Start {
+		t.Fatalf("after a paragraph inserted at %d, the box above the paragraph it moved is %+v", first.Start, (*boxes)[moved-1])
 	}
 	// Another width wraps the paragraphs otherwise: the frame that paints
 	// them builds another, for the view to follow.
@@ -588,5 +594,89 @@ func TestVisibleParagraphsGutter(t *testing.T) {
 	}
 	if boxes[0].Index == 0 {
 		t.Error("the editor did not scroll")
+	}
+}
+
+// TestCaretRect checks that the caret, as an app's view reads it while it
+// builds to place a popup under it, is where the editor paints it and
+// tells the input method, as the user types, the app moves it, the editor
+// scrolls and its width changes, with no frames more than those.
+func TestCaretRect(t *testing.T) {
+	paras := make([]Paragraph, 60)
+	for i := range paras {
+		paras[i] = para(fmt.Sprintf("Paragraph %d, long enough to wrap in a window this narrow.", i))
+	}
+	doc := NewDocument(TextOf(paras...))
+	if _, ok := doc.CaretRect(); ok {
+		t.Fatal("no editor shows the document, and a caret")
+	}
+	var read ui.Rect
+	var readOK bool
+	builds := 0
+	tt := ui.NewTester(func(c *ui.Context) {
+		builds++
+		read, readOK = doc.CaretRect()
+		EditorBase(c, doc, EditorOptions{Font: ui.Font{Size: 10}}).Fill()
+	}, 300, 200)
+	// The first frame reads nothing, before the editor showed the
+	// document; the next, with no help from the app, the caret.
+	if !readOK || builds < 2 {
+		t.Fatalf("after %d frames the view read %v %v", builds, read, readOK)
+	}
+	tt.Press(150, 5)
+	tt.Release(150, 5)
+	check := func(what string, inView bool) {
+		t.Helper()
+		v := doc.shownIn.Value()
+		if v == nil {
+			t.Fatalf("%s: no editor shows the document", what)
+		}
+		want, wantOK := v.caretRect()
+		if read != want || readOK != wantOK || readOK != inView {
+			t.Fatalf("%s: the view read %v %v, the editor paints %v %v, want in view %v", what, read, readOK, want, wantOK, inView)
+		}
+		if !inView {
+			return
+		}
+		if c, ok := tt.TextCaret(); !ok || c.X != read.X || c.Y != read.Y || c.H != read.H {
+			t.Fatalf("%s: the view read %v, the input method has %v %v", what, read, c, ok)
+		}
+	}
+	check("focused", true)
+	// The view reads where the app put the caret in the frame that shows
+	// it, not a frame late.
+	moveTo := func(what string, i int) {
+		t.Helper()
+		n := builds
+		doc.SetSelection(i, i)
+		tt.Frame()
+		check(what, true)
+		if builds != n+1 {
+			t.Fatalf("%s: %d frames for one", what, builds-n)
+		}
+	}
+	moveTo("moved by the app", 0)
+	start := read
+	tt.Type("abc")
+	check("typed", true)
+	if read.X <= start.X || read.Y != start.Y {
+		t.Fatalf("typed from %v, the caret read at %v", start, read)
+	}
+	// The end is far below: the editor scrolls to reveal it, and the view
+	// reads where.
+	moveTo("revealed", doc.Text().Len())
+	if read.Y < 100 {
+		t.Fatalf("at the end, the caret read at %v", read)
+	}
+	tt.Scroll(150, 100, 0, -100000)
+	check("scrolled out of view", false)
+	moveTo("moved back into view", 40)
+	tt.SetSize(160, 200)
+	check("narrower", true)
+	// Frames that change nothing ask for none more.
+	n := builds
+	tt.Frame()
+	if builds != n+1 || tt.FramePending() {
+		t.Fatalf("%d frames for one", builds-n)
 	}
 }

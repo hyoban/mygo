@@ -216,7 +216,7 @@ func (e *node) Step(step float64) *node {
 func (e *node) Vertical() *node {
 	if e.widget == "SliderBase" {
 		coreLocal(e, sliderKey{}, func() sliderSettings { return sliderSettings{} }).now.vertical = true
-		e.vertical = true
+		e.orient = Vertical
 	}
 	return e
 }
@@ -657,6 +657,7 @@ func popover(c *context, anchor *node, open *bool, modal bool, fn func(panel *no
 	if !*open {
 		return nil
 	}
+	anchor.popupShows()
 	var panel *node
 	dismissed := false
 	coreOverlay(c, func() {

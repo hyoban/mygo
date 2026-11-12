@@ -620,6 +620,41 @@ func TestSetWindowAppearance(handle uintptr, dark bool) {
 	})
 }
 
+// TestPopoverAppearance returns the explicit popover chrome appearance and
+// the effective appearances of its window/content, including the arrow's host.
+func TestPopoverAppearance(handle uintptr) (chrome, window, content string) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.popover == 0 {
+		return
+	}
+	name := func(object id, property string) string {
+		a := send(object, property)
+		if a == 0 {
+			return ""
+		}
+		return goString(send(a, "bestMatchFromAppearancesWithNames:", uintptr(nsArray(nsString("NSAppearanceNameAqua"), nsString("NSAppearanceNameDarkAqua")))))
+	}
+	return name(w.popover, "appearance"), name(w.win, "effectiveAppearance"), name(w.view, "effectiveAppearance")
+}
+
+// TestSetPopoverAnchorAppearance models a status item's contrast appearance,
+// which can differ from the application's own theme over desktop wallpaper.
+func TestSetPopoverAnchorAppearance(handle uintptr, dark bool) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil {
+		return
+	}
+	view, _, _ := w.popoverAnchor()
+	if view == 0 {
+		return
+	}
+	name := "NSAppearanceNameAqua"
+	if dark {
+		name = "NSAppearanceNameDarkAqua"
+	}
+	send(view, "setAppearance:", uintptr(send(class("NSAppearance"), "appearanceNamed:", uintptr(nsString(name)))))
+}
+
 // TestWebViewAttached reports whether a window's web view is in its view
 // hierarchy.
 func TestWebViewAttached(handle uintptr) bool {
@@ -880,6 +915,23 @@ func TestRoundedBacking(handle uintptr) (opaque bool, alpha, red float64) {
 		}
 	})
 	return opaque, alpha, red
+}
+
+// TestWindowBacking reports whether a window is opaque, and the alpha of
+// its background color, in sRGB.
+func TestWindowBacking(handle uintptr) (opaque bool, alpha float64) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil {
+		return false, 0
+	}
+	opaque = sendBool(w.win, "isOpaque")
+	withPool(func() {
+		c := send(send(w.win, "backgroundColor"), "colorUsingColorSpace:", uintptr(send(class("NSColorSpace"), "sRGBColorSpace")))
+		if c != 0 {
+			alpha = msgFloat(c, sel("alphaComponent"))
+		}
+	})
+	return opaque, alpha
 }
 
 // TestDockInspector opens the web inspector of a window docked to it, and
@@ -1183,6 +1235,34 @@ func TestComposeOver(handle uintptr, text string, caret int, commit bool, from, 
 	return true
 }
 
+// TestKeyComposing presses the key of virtual key code code, typing chars,
+// in a window showing native UI, with the test standing in for the input
+// method that interprets it: the input method inserts commit, unless it
+// is empty, then asks for the key's command (doCommandBySelector:), unless
+// command is empty. The Korean input method takes Return so while it
+// composes: it commits the syllable and asks for insertNewline:. The
+// Japanese one commits the candidate and asks for nothing. It reports
+// false for a window showing a web page.
+func TestKeyComposing(handle uintptr, code uint16, chars, commit, command string) bool {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.surface == nil {
+		return false
+	}
+	loadTestInput()
+	interpret := interpretKeys
+	defer func() { interpretKeys = interpret }()
+	interpretKeys = func(view, ev id) {
+		if commit != "" {
+			msgInsertText(view, sel("insertText:replacementRange:"), nsString(commit), nsRange{Location: nsNotFound})
+		}
+		if command != "" {
+			send(view, "doCommandBySelector:", uintptr(sel(command)))
+		}
+	}
+	sendKeyToWindow(w, code, chars, false)
+	return true
+}
+
 // TestInputClient returns what a window's surface tells input methods: the
 // selected range and the whole text of their document.
 func TestInputClient(handle uintptr) (selected [2]int, document string) {
@@ -1299,7 +1379,10 @@ type TestAccessNode struct {
 	Focused  bool
 	Depth    int
 	Children int
-	obj      id
+	// Index is a row's place among its table's rows, from 0, and
+	// RowCount how many rows a table has, through the newer API.
+	Index, RowCount int
+	obj             id
 }
 
 // TestAccessibility reads the elements of a window showing native UI as
@@ -1323,6 +1406,10 @@ func TestAccessibility(handle uintptr) []TestAccessNode {
 					Depth:    depth,
 					Children: len(kids),
 					obj:      obj,
+				}
+				// Ours, not a page's elements, which may not answer them.
+				if theBackend.byAccess[obj] != nil {
+					n.Index, n.RowCount = sendInt(obj, "accessibilityIndex"), sendInt(obj, "accessibilityRowCount")
 				}
 				if v := send(obj, "accessibilityValue"); v != 0 {
 					n.Value = goString(send(v, "description"))
@@ -1712,6 +1799,15 @@ func TestWindowPixels(handle uintptr) (img *image.RGBA, ok bool) {
 		copy(img.Pix[row*img.Stride:], full.Pix[full.PixOffset(r.Min.X, r.Min.Y+row):full.PixOffset(r.Max.X, r.Min.Y+row)])
 	}
 	return img, true
+}
+
+// TestPauseFrames has the surface of a window's native UI take its last
+// frame for one long past, as on a runner slow enough that a frame asked
+// for comes after a pause (RequestFrame), whatever the machine's speed.
+func TestPauseFrames(handle uintptr) {
+	if w := theBackend.byNSWindow[id(handle)]; w != nil && w.surface != nil {
+		w.surface.lastFrame = time.Time{}
+	}
 }
 
 // TestDrawablesTrimmed reports whether the GPU renderer of a window's

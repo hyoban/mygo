@@ -111,7 +111,7 @@ func (e *embed) place(c, f platform.RectF, height float64) {
 		}
 	}
 	if parent != s.w.view {
-		clip = msgRectToView(s.w.view, sel("convertRect:toView:"), clip, parent)
+		clip = msgConvertRectView(s.w.view, sel("convertRect:toView:"), clip, parent)
 	}
 	msgSetRect(e.clip, sel("setFrame:"), clip)
 	if sendBool(e.clip, "isHidden") {

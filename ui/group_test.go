@@ -197,3 +197,145 @@ func TestOpacityGroupTurned(t *testing.T) {
 	nearPixel(t, img, 100, 60, [3]int{255, 127, 127})
 	nearPixel(t, img, 5, 5, [3]int{255, 255, 255})
 }
+
+// TestOpacityGroupFadedOut checks that a group painting into its layer
+// shows nothing once faded out, as an Exit or a pose's Fade ends. It drew
+// its layer at an opacity of 0, which an op takes for 1: the copy of a
+// popup closing, or a page fading away, came back whole at the end.
+func TestOpacityGroupFadedOut(t *testing.T) {
+	white, red := RGB(255, 255, 255), RGB(255, 0, 0)
+	opacity := float32(0.5)
+	tt := coreNewTester(func(c *context) {
+		coreColumn(c).Background(white).Size(100, 80).Children(func() {
+			coreBox(c).Size(60, 40).Children(func() {
+				coreBox(c).Absolute().Left(0).Top(0).Size(40, 40).Background(red)
+				coreBox(c).Absolute().Left(20).Top(0).Size(40, 40).Background(red)
+			}).Opacity(opacity)
+		})
+	}, 100, 80)
+	tt.Frame()
+	if !layered(tt) {
+		t.Fatal("overlapping boxes painted flat")
+	}
+	opacity = 0
+	tt.Frame()
+	nearPixel(t, tt.Image(), 25, 20, [3]int{255, 255, 255})
+	nearPixel(t, tt.Image(), 5, 20, [3]int{255, 255, 255})
+}
+
+// painted reports whether some pixel of img within r is not white.
+func painted(img *image.RGBA, r image.Rectangle) bool {
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			if p := img.RGBAAt(x, y); p.R < 250 || p.G < 250 || p.B < 250 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestOpacityGroupHoldsBlur checks that a group's layer holds the blur of
+// what is inside it, beyond the boxes: it was cut at their edges, which
+// showed a square around a word's glow faded with it.
+func TestOpacityGroupHoldsBlur(t *testing.T) {
+	white, red := RGB(255, 255, 255), RGB(255, 0, 0)
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Size(200, 100).Background(white).Children(func() {
+			coreBox(c).Absolute().Left(60).Top(30).Size(80, 40).Children(func() {
+				coreBox(c).Absolute().Left(0).Top(0).Size(40, 40).Background(red)
+				coreBox(c).Absolute().Left(20).Top(0).Size(40, 40).Background(red)
+				coreBox(c).Absolute().Left(40).Top(0).Size(40, 40).Background(red).Blur(6)
+			}).Opacity(0.5)
+		})
+	}, 200, 100)
+	for range 2 {
+		tt.Frame()
+		if !layered(tt) {
+			t.Fatal("overlapping boxes painted flat")
+		}
+		// 8 DIPs right of the boxes, within the blur's 18.
+		if !painted(tt.Image(), image.Rect(146, 40, 150, 60)) {
+			t.Fatal("the blur was cut at the edge of the boxes")
+		}
+	}
+}
+
+// TestOpacityGroupHoldsTextShadow checks that a group's layer holds a text's
+// shadow cast beyond the boxes.
+func TestOpacityGroupHoldsTextShadow(t *testing.T) {
+	white, red := RGB(255, 255, 255), RGB(255, 0, 0)
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Size(200, 100).Background(white).Children(func() {
+			coreBox(c).Absolute().Left(20).Top(30).Size(40, 40).Children(func() {
+				coreBox(c).Absolute().Left(0).Top(0).Size(40, 40).Background(red)
+				coreText(c, "Hi").Absolute().Left(0).Top(0).FontSize(20).TextShadow(80, 0, 0, RGB(0, 0, 255))
+			}).Opacity(0.5)
+		})
+	}, 200, 100)
+	tt.Frame()
+	if !layered(tt) {
+		t.Fatal("the text over the box painted flat")
+	}
+	if !painted(tt.Image(), image.Rect(100, 30, 140, 70)) {
+		t.Fatal("the text's shadow beyond the boxes was cut")
+	}
+}
+
+// TestCacheHoldsBlur checks that a kept layer (Cache) holds the blur of what
+// is inside it, beyond the boxes.
+func TestCacheHoldsBlur(t *testing.T) {
+	white, red := RGB(255, 255, 255), RGB(255, 0, 0)
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Size(200, 100).Background(white).Children(func() {
+			coreBox(c).Absolute().Left(60).Top(30).Size(40, 40).Children(func() {
+				coreBox(c).Size(40, 40).Background(red).Blur(6)
+			}).Cache()
+		})
+	}, 200, 100)
+	for range 2 {
+		tt.Frame()
+		if !painted(tt.Image(), image.Rect(106, 40, 110, 60)) {
+			t.Fatal("the blur was cut at the edge of the boxes")
+		}
+	}
+}
+
+// TestLayerKeepsTransformedChildren checks that a layer (Cache, Blur or an
+// effect) of an untransformed element keeps what is scaled or rotated
+// inside it in its place, as it draws without the layer.
+func TestLayerKeepsTransformedChildren(t *testing.T) {
+	white, red := RGB(255, 255, 255), RGB(255, 0, 0)
+	layers := map[string]func(e *node) *node{
+		"cache":  func(e *node) *node { return e.Cache() },
+		"blur":   func(e *node) *node { return e.Blur(0.5) },
+		"effect": func(e *node) *node { return e.Effect(wholeLayer{}) },
+	}
+	turns := map[string]func(e *node) *node{
+		"scale":  func(e *node) *node { return e.Scale(0.5, 0.5) },
+		"rotate": func(e *node) *node { return e.Rotate(45) },
+	}
+	for ln, layer := range layers {
+		for tn, turn := range turns {
+			tt := coreNewTester(func(c *context) {
+				coreBox(c).Size(200, 100).Background(white).Children(func() {
+					layer(coreBox(c).Absolute().Left(60).Top(30).Size(40, 40)).Children(func() {
+						turn(coreBox(c).Size(40, 40).Background(red))
+					})
+				})
+			}, 200, 100)
+			for range 2 {
+				tt.Frame()
+				img := tt.Image()
+				if p := img.RGBAAt(80, 50); p.R != 255 || p.G > 10 {
+					t.Errorf("%s, %s: at the center %v, want red", ln, tn, p)
+				}
+				if tn == "scale" {
+					if p := img.RGBAAt(64, 34); p.G < 245 {
+						t.Errorf("%s, %s: outside the square %v, want white", ln, tn, p)
+					}
+				}
+			}
+		}
+	}
+}

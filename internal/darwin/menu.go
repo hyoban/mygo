@@ -277,7 +277,9 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 		menu := b.buildMenu(m, "", owner)
 		var view id
 		var loc NSPoint
+		var content *surface
 		if w, ok := pw.(*window); ok && w != nil && !w.closed {
+			content = w.surface
 			view = w.web
 			if w.surface != nil {
 				view = w.surface.view
@@ -306,6 +308,9 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 				defer send(view, "setUserInterfaceLayoutDirection:", uintptr(was))
 			}
 		}
+		// A menu shown while a button is down takes its release, in its
+		// own loop: the content's press ends with none.
+		held := content != nil && send(class("NSEvent"), "pressedMouseButtons") != 0
 		if w, ok := pw.(*window); ok && m.Text && view != 0 {
 			// As a context menu, which AppKit gives its items for text:
 			// the services and Writing Tools that take the selection
@@ -317,10 +322,16 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 				rightMouseDown, at, 0, 0, sendInt(w.win, "windowNumber"), 0, 0, 1, 1)
 			if ev != 0 {
 				send(class("NSMenu"), "popUpContextMenu:withEvent:forView:", uintptr(menu), uintptr(ev), uintptr(view))
+				if held && b.surfaceOf(content.view) == content {
+					content.send(platform.SurfaceEvent{Kind: platform.PointerCancel})
+				}
 				return
 			}
 		}
 		msgPopUpMenu(menu, sel("popUpMenuPositioningItem:atLocation:inView:"), 0, loc, view)
+		if held && b.surfaceOf(content.view) == content {
+			content.send(platform.SurfaceEvent{Kind: platform.PointerCancel})
+		}
 	})
 }
 

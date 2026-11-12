@@ -11,10 +11,11 @@ import (
 // Transform is a visual transform, in 2D, or in 3D seen in perspective.
 // Its zero value is identity. It changes drawing and interaction, leaving
 // the space reserved by layout unchanged. Build one with Translation,
-// Scaling, Rotation and Skewing, and in 3D RotationX, RotationY and
-// Perspective, and compose them with Then. Elements inherit their
-// ancestors' transforms; each flattens what its 3D transform makes of it
-// into its parent's plane, as CSS's flat transform-style.
+// Scaling, Rotation and Skewing, and in 3D TranslationZ, Translation3D,
+// RotationX, RotationY and Perspective, and compose them with Then.
+// Elements inherit their ancestors' transforms; each flattens what its 3D
+// transform makes of it into its parent's plane, as CSS's flat
+// transform-style.
 type Transform struct {
 	m  scene.Affine
 	d3 *mat4 // a transform in 3D, which m is not
@@ -35,6 +36,9 @@ func (t Transform) mat4() mat4 {
 		m[0], m[1], m[3] = a.A, a.C, a.X
 		m[4], m[5], m[7] = a.B, a.D, a.Y
 		m[12], m[13] = a.G, a.H
+		if a.Behind {
+			m[15] = -1
+		}
 	}
 	return m
 }
@@ -43,16 +47,40 @@ func (t Transform) mat4() mat4 {
 func (t Transform) set() bool { return t.m.Set || t.d3 != nil }
 
 // flat returns what t makes of its plane, z = 0, seen from the front.
+// Elements and Painter.Transform flatten their transforms around their
+// own origins and move them where they act in 2D (scene.Affine.Mul).
 func (t Transform) flat() scene.Affine {
 	if t.d3 == nil {
 		return t.m
 	}
 	m := t.d3
+	// k is the origin's divisor, its sign kept (scene.Affine.Behind).
+	// Negative, the origin is behind the viewer, though what the plane
+	// shows around it may be in front: a turn in perspective moved far
+	// from the window's origin puts that origin past the turned plane's
+	// horizon (#1406). With all of the plane behind the viewer, where a Z
+	// translation as far as Perspective's distance puts a plane not
+	// turned, or with the origin at the viewer, nothing shows, as in CSS.
 	k := m[15]
-	if k == 0 || math.IsNaN(float64(k)) {
+	if k == 0 || math.IsNaN(float64(k)) || k < 0 && m[12] == 0 && m[13] == 0 {
 		return scene.Affine{Set: true} // singular: nothing shows
 	}
-	return scene.Projective(m[0]/k, m[4]/k, m[1]/k, m[5]/k, m[3]/k, m[7]/k, m[12]/k, m[13]/k)
+	behind := k < 0
+	k = float32(math.Abs(float64(k)))
+	v := [8]float32{m[0] / k, m[4] / k, m[1] / k, m[5] / k, m[3] / k, m[7] / k, m[12] / k, m[13] / k}
+	for _, n := range v {
+		if math.IsInf(float64(n), 0) || math.IsNaN(float64(n)) {
+			return scene.Affine{Set: true}
+		}
+	}
+	a := scene.Projective(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7])
+	if behind {
+		if !a.Perspective() {
+			return scene.Affine{Set: true}
+		}
+		a.Behind = true
+	}
+	return a
 }
 
 // in3D returns m as a Transform.
@@ -63,6 +91,33 @@ func Translation(x, y float32) Transform {
 	finiteTransform(x, y)
 	scene.FoldTranslations() // renderers draw them as untransformed content
 	return Transform{m: scene.Translation(x, y)}
+}
+
+// TranslationZ moves content z DIPs along the axis toward the viewer, as
+// CSS's translateZ(): with Perspective after it, nearer for positive z,
+// looking larger, and farther for negative z, looking smaller, by
+// distance/(distance-z) around the transform's origin. Without
+// Perspective it changes nothing that shows, as in CSS. Content moved as
+// far as Perspective's distance, or past it, is behind the viewer and
+// shows nothing.
+//
+//	// 120 DIPs behind the plane, seen from 800 DIPs: 800/920 its size.
+//	ui.Box(c).Size(240, 160).Transform(ui.TranslationZ(-120).Then(ui.Perspective(800)))
+func TranslationZ(z float32) Transform { return Translation3D(0, 0, z) }
+
+// Translation3D moves content by x and y DIPs in its plane and z toward
+// the viewer, as CSS's translate3d(): Translation and TranslationZ.
+func Translation3D(x, y, z float32) Transform {
+	finiteTransform(x, y, z)
+	if z == 0 {
+		return Translation(x, y)
+	}
+	if x != 0 || y != 0 {
+		scene.FoldTranslations() // without Perspective, it only moves
+	}
+	m := identity4()
+	m[3], m[7], m[11] = x, y, z
+	return in3D(m)
 }
 
 // Scaling scales each axis; zero collapses it and negative values reflect it.
@@ -190,6 +245,16 @@ func (e *node) Skew(x, y float32) *node {
 	return e
 }
 
+// TranslateZ moves the element z DIPs toward the viewer after its
+// existing transform, as TranslationZ: follow it with Perspective to see
+// it nearer or farther. A card lifting toward the viewer as it turns over:
+//
+//	card.RotateY(turn).TranslateZ(lift).Perspective(800)
+func (e *node) TranslateZ(z float32) *node {
+	e.transform = e.transform.Then(TranslationZ(z))
+	return e
+}
+
 // RotateX turns the element in 3D around the horizontal axis through its
 // origin, after its existing transform, as RotationX: follow it with
 // Perspective to see it in depth.
@@ -227,18 +292,32 @@ func (e *node) Perspective(distance float32) *node {
 func (e *node) BackfaceHidden() *node { e.backface = true; return e }
 
 // facesAway reports whether t turns the front of its plane, which faces
-// the viewer, away: whether its normal points away.
+// the viewer, away: whether its normal, by the inverse transpose of t,
+// points away. The inverse holds t's perspective, so that a plane moved
+// off its origin, as by TranslationZ before a turn, faces where the viewer
+// sees it from, as Chromium's IsBackFaceVisible has it: the item at the
+// side of a carousel turns its back as it passes the viewer's line.
 func (t Transform) facesAway() bool {
 	if t.d3 == nil {
 		return false
 	}
-	m := t.d3
-	det := m[0]*(m[5]*m[10]-m[6]*m[9]) - m[1]*(m[4]*m[10]-m[6]*m[8]) + m[2]*(m[4]*m[9]-m[5]*m[8])
+	var m [16]float64
+	for i, v := range t.d3 {
+		m[i] = float64(v)
+	}
+	det3 := func(r0, r1, r2, c0, c1, c2 int) float64 {
+		a := func(r, c int) float64 { return m[4*r+c] }
+		return a(r0, c0)*(a(r1, c1)*a(r2, c2)-a(r1, c2)*a(r2, c1)) -
+			a(r0, c1)*(a(r1, c0)*a(r2, c2)-a(r1, c2)*a(r2, c0)) +
+			a(r0, c2)*(a(r1, c0)*a(r2, c1)-a(r1, c1)*a(r2, c0))
+	}
+	// The determinant, along the last column; the inverse's entry at row
+	// and column 2 is the cofactor there over it.
+	det := -m[3]*det3(1, 2, 3, 0, 1, 2) + m[7]*det3(0, 2, 3, 0, 1, 2) - m[11]*det3(0, 1, 3, 0, 1, 2) + m[15]*det3(0, 1, 2, 0, 1, 2)
 	if det == 0 {
 		return false
 	}
-	// The normal's z, by the inverse transpose of the linear part.
-	return (m[0]*m[5]-m[1]*m[4])/det < 0
+	return det3(0, 1, 3, 0, 1, 3)*det < 0
 }
 
 func finiteTransform(v ...float32) {
@@ -329,11 +408,54 @@ func (s *state) vector(x, y, dx, dy float32) (float32, float32) {
 // (HitTest) and every ancestor's clip, rather than the conservative
 // rectangles used for accessibility and culling.
 func (rt *engine) contains(s *state, r Rect, x, y float32) bool {
+	return rt.containsScrolled(s, r, x, y, false)
+}
+
+// scrolled returns how far in the window the content of s moved since the
+// last frame laid it out, as its offset moved since: the other way.
+func (s *state) scrolled() (dx, dy float32) {
+	ox, oy := float32(s.scrollX-s.laidX), float32(s.scrollY-s.laidY)
+	if ox == 0 && oy == 0 {
+		return 0, 0
+	}
+	if s.rtl {
+		// Right to left, the offset counts from the right.
+		ox = -ox
+	}
+	return s.world.VectorAt(s.x, s.y, -ox, -oy)
+}
+
+// containsScrolled is contains, where scrolled has what is inside scroll
+// containers that scrolled since the last frame laid them out tested
+// where their offsets moved it, as the next frame will lay it out.
+func (rt *engine) containsScrolled(s *state, r Rect, x, y float32, scrolled bool) bool {
+	// How far the containers around s moved it.
+	var sx, sy float32
+	if scrolled && !s.lifted {
+		for p := rt.states[s.parent]; p != nil; p = rt.states[p.parent] {
+			dx, dy := p.scrolled()
+			sx, sy = sx+dx, sy+dy
+			if p.lifted || p.parent == 0 {
+				break
+			}
+		}
+	}
+	if !scrolled && !s.reposed && !rt.noHitFilter && r == (Rect{s.x, s.y, s.w, s.h}) {
+		// Outside what of its box showed, clipped as commit found it, the
+		// point is in none of it: most of a large tree's elements are
+		// told so at once, without inverting their transforms. The
+		// margin keeps rounding from telling apart what the test below
+		// takes.
+		const m = 0.5
+		if x < s.vx-m || y < s.vy-m || x >= s.vx+s.vw+m || y >= s.vy+s.vh+m {
+			return false
+		}
+	}
 	m, ok := s.world.Inverse()
 	if !ok {
 		return false
 	}
-	lx, ly := m.Point(x, y)
+	lx, ly := m.Point(x-sx, y-sy)
 	if !r.Contains(lx, ly) || s.selfClips && !roundedContains(s.selfClip, uniformRadii(s.selfRadius), lx, ly) ||
 		s.hitFn != nil && !s.hitFn(lx, ly, Rect{s.x, s.y, s.w, s.h}) {
 		return false
@@ -341,12 +463,18 @@ func (rt *engine) contains(s *state, r Rect, x, y float32) bool {
 	// The clips around an element flying stop at it, as it paints out of
 	// them.
 	for p := rt.states[s.parent]; p != nil && !s.lifted; p = rt.states[p.parent] {
+		if scrolled {
+			// A container's own box, and its clip, stay where they were
+			// as its content scrolls.
+			dx, dy := p.scrolled()
+			sx, sy = sx-dx, sy-dy
+		}
 		if p.clips || p.selfClips {
 			m, ok := p.world.Inverse()
 			if !ok {
 				return false
 			}
-			px, py := m.Point(x, y)
+			px, py := m.Point(x-sx, y-sy)
 			if p.clips && !roundedContains(p.clipRect, p.clipRadii, px, py) ||
 				p.selfClips && !roundedContains(p.selfClip, uniformRadii(p.selfRadius), px, py) {
 				return false
@@ -396,7 +524,11 @@ func laidOutVisualBox(e *node) Rect {
 }
 
 func (p *Painter) add(op scene.Op) {
-	op.Transform = p.transform.Pixels(p.scale).Mul(op.Transform)
+	// Every op goes through here, and most are painted outside any
+	// Transform: an unset one leaves op.Transform as it is.
+	if p.transform.Set {
+		op.Transform = p.transform.Pixels(p.scale).Mul(op.Transform)
+	}
 	p.s.Ops = append(p.s.Ops, op)
 }
 

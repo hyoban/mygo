@@ -120,6 +120,8 @@ func (c *context) reset(now time.Time, w, h float32) {
 	clear(c.rt.inputs)
 	c.rt.inputs = c.rt.inputs[:0]
 	c.rt.building = 0
+	clear(c.rt.built)
+	c.rt.built, c.rt.nbuilt = c.rt.built[:0], 0
 	clear(c.rt.actions)
 	c.rt.actions = c.rt.actions[:0]
 	c.dirty = max(c.dirty, c.used)
@@ -419,8 +421,11 @@ func (c *context) Size() (width, height float32) { return c.w, c.h }
 
 // TitleBar is the room the window controls take at the top of a window
 // with a hidden title bar, in DIPs: they sit in a band of Height along the
-// top edge, Left wide from the left edge and Right wide from the right.
-type TitleBar struct{ Height, Left, Right float32 }
+// top edge, Left wide from the left edge and Right wide from the right,
+// and end Bottom below the top edge: on macOS the bottom edge of the
+// traffic lights, and Height on Linux and Windows, where the controls fill
+// the band.
+type TitleBar struct{ Height, Left, Right, Bottom float32 }
 
 // TitleBar returns the room the window controls take in a window with a
 // hidden title bar (mygo.WindowOptions.TitleBarStyle), whose view draws
@@ -431,6 +436,10 @@ type TitleBar struct{ Height, Left, Right float32 }
 //
 //	bar := c.TitleBar()
 //	ui.Row(c).Height(max(bar.Height, 32)).Padding(0, bar.Right, 0, bar.Left).DragWindow()
+//
+// A sidebar under the controls starts below Bottom:
+//
+//	ui.Column(c).Padding(bar.Bottom+8, 0, 0, 0)
 func (c *context) TitleBar() TitleBar { return c.titleBar }
 
 // Vibrancy reports whether the window shows its material
@@ -684,6 +693,9 @@ type state struct {
 	// invisible tells that the element showed nothing in the last frame,
 	// wherever it was: invisible, inert or hidden (InViewMargin).
 	invisible bool
+	// view is what InView and its kin read, once an element asks for it
+	// (watchView), for the frame that rebuilds the view when it changes.
+	view *viewWatch
 	// rtl tells that the element was laid out right to left: a scroll
 	// container's horizontal offset counts from the right, and its
 	// vertical scroll bar is on the left.
@@ -711,18 +723,34 @@ type state struct {
 	// text what it measured and laid out of its text (heldText).
 	lay  layoutRecord
 	text *heldText
-	// The element's box and its visible part in the last frame.
+	// The element's box and its visible part in the last frame, and
+	// whether a pose moved it since (updateWorld), which leaves the
+	// visible part as commit found it.
 	x, y, w, h     float32
 	vx, vy, vw, vh float32
+	reposed        bool
 	parent         uint64
 	flags          uint32
+	// hoverBuilt tells that the pass building the element read its hover
+	// (Hovered): its hover changing builds the view anew. hoverLook tells
+	// that the last frame's painting did, as a button's styleFn picks its
+	// hovered background and a scroll container shows its bars: its hover
+	// changing paints the last frame's elements again, and no more
+	// (hoverNeeds).
+	hoverBuilt, hoverLook bool
 	// ignoreInput tells that the element, or one around it, ignores the
 	// pointer and the keyboard (IgnoreInput); accessHidden, that it is
 	// out of what assistive technology reads (AccessHidden, or inert);
 	// accessDisabled, that assistive technology reads it as unavailable
 	// (AccessDisabled).
 	ignoreInput, accessHidden, accessDisabled bool
-	cursor                                    Cursor
+	// handleDoubleClick tells that the element, a DragWindow handle,
+	// takes its double click (WindowDoubleClicked).
+	handleDoubleClick bool
+	// activeDescendant is the element that has the keyboard focus while
+	// this one does (ActiveDescendant), 0 for none.
+	activeDescendant uint64
+	cursor           Cursor
 	// tip marks an element with a tooltip (TooltipBase), which shows once
 	// the pointer has rested on it for tipDelay, or at once within tipWarm
 	// of another going: its theme's TooltipDelay; tipText marks one the
@@ -730,6 +758,10 @@ type state struct {
 	tip               bool
 	tipDelay, tipWarm time.Duration
 	tipText           string
+	// popped is the last frame a popup attached to the element showed in
+	// (popupShows): a menu, a popover or a select's options, while which
+	// its tip does not show.
+	popped uint64
 	// effectLayer is what the element and its children render into for
 	// its Effect, its blur, its Cache or its opacity as a group
 	// (paintGroup), kept from frame to frame. grouped tells that, faded
@@ -737,8 +769,15 @@ type state struct {
 	// paints into the layer at once rather than flat first (checkFlat).
 	effectLayer *Canvas
 	grouped     bool
-	// webView is the web view the element shows (WebView), sourceList
-	// the system's list (SourceList).
+	// ink is what the element and those inside it painted into its layer
+	// in frame inkFrame, in its own space, and lastInk what they painted
+	// in a frame before (keepInk): the layer of a frame holds lastInk, as
+	// far as a blur or a shadow inside it reached, the same however many
+	// times the frame paints.
+	ink, lastInk Rect
+	inkFrame     uint64
+	// webView is the web view the element shows (WebView), native the
+	// system's list (SourceList).
 	webView NativeWebView
 	native  nativeView
 	// control is the system's control the element shows (NativeCheckbox,
@@ -746,6 +785,10 @@ type state struct {
 	control *nativeControl
 
 	clicks, rightClicks, doubleClicks int
+	// quietClicks counts those of clicks that a row does not report as a
+	// click of its own (RowClicked): the later clicks of a double or
+	// triple click, and assistive technology's focus choosing a row.
+	quietClicks int
 	// pressMods are the modifiers held as the pointer went down on the
 	// element, and clickMods those of its last click.
 	pressMods, clickMods Modifiers
@@ -769,9 +812,10 @@ type state struct {
 	pressPressure float32
 	// drag follows the press's moves; released tells that it ended since
 	// the last frame, going at releaseVX and releaseVY in the element's
-	// axes, releaseWX and releaseWY in the window's.
+	// axes, releaseWX and releaseWY in the window's, and canceled that it
+	// ended without the pointer letting go (PressCanceled).
 	drag                 dragTrack
-	released             bool
+	released, canceled   bool
 	releaseVX, releaseVY float32
 	releaseWX, releaseWY float32
 	pressPending         bool // the press began since the last build pass
@@ -779,12 +823,14 @@ type state struct {
 	// kept when it came with moves no pass had read for the pass that
 	// reads them to apply as it ends (forgetInput): where the pointer let
 	// go, which the element sees as the pointer meanwhile (pointer),
-	// whether it ended a drag, and the clicks since, the release's own
-	// first (click).
+	// whether it ended a drag or was canceled, and the clicks since, the
+	// release's own first (click).
 	releaseLater struct {
 		due, released       bool
+		canceled            bool
 		x, y                float32
 		clicks, rightClicks int
+		quietClicks         int
 		clickMods           Modifiers
 	}
 	// dragRec is what Draggable keeps of the element from frame to frame.
@@ -795,16 +841,19 @@ type state struct {
 	scrollX, scrollY float64
 	contentW         float64
 	contentH         float64
-	// barInset is the element's ScrollbarInsets, and barWidth the width
-	// of its scroll bars, its theme's ScrollbarWidth.
+	// barInset is the element's ScrollbarInsets, and barStyle how its
+	// scroll bars look, its ScrollbarStyle with the theme's zero fields
+	// filled in.
 	barInset [4]float32
-	barWidth float32
+	barStyle *ScrollbarStyle
 	// barsShown reports whether the last frame painted the element's
 	// scroll bars: they show only while it is hovered or a bar is
 	// dragged, unless it keeps them (KeepScrollbars), or, as AppKit's
 	// overlay scrollers on macOS, a moment after it scrolled and while the
 	// pointer is on a bar's track.
-	barsShown, hideScrollbars bool
+	barsShown bool
+	// barFlags contains the enabled scroll axes and, if any, the keep bit.
+	barFlags uint32
 	// barX and barY are the offset the bars were last painted at, and
 	// scrolledAt when it last moved (overlayBars).
 	barX, barY float64
@@ -824,6 +873,9 @@ type state struct {
 	// startX and startY are the offset before frame moveFrame moved it.
 	moveFrame      uint64
 	startX, startY float64
+	// laidX and laidY are the offset the last frame laid the content out
+	// at, where the hits of what is inside are (hoverScrolled).
+	laidX, laidY float64
 	// list is the ListState that placed the rows of a List last.
 	list *ListState
 	// cx, cy, cw and ch are the element's content box, inside its
@@ -938,9 +990,14 @@ func (rt *engine) lookState(id uint64) (s *state, built bool) {
 	} else {
 		built = s.seen == rt.frame && s.pass == rt.pass
 	}
+	if !built {
+		rt.built = append(rt.built, s)
+		rt.nbuilt++
+	}
 	s.rt = rt
 	s.lookedSeen, s.lookedPass = s.seen, s.pass
 	s.seen, s.pass = rt.frame, rt.pass
+	s.hoverBuilt = false
 	// What the element drags and takes, as this pass asks.
 	s.dragValue, s.dragFn, s.accepts = nil, nil, nil
 	s.dataSource, s.dataTarget = nil, nil
@@ -956,9 +1013,14 @@ func (rt *engine) lookState(id uint64) (s *state, built bool) {
 // overlay, unless another element of the pass built it.
 func (rt *engine) unlook(s *state) {
 	if s.lookedSeen != 0 {
+		if s.lookedSeen != rt.frame || s.lookedPass != rt.pass {
+			// This lookup counted it built (lookState).
+			rt.nbuilt--
+		}
 		s.seen, s.pass = s.lookedSeen, s.lookedPass
 		return
 	}
+	rt.nbuilt--
 	delete(rt.states, s.id)
 	// Locals made on the element's place before Key gave it another
 	// identity are the element's no more.

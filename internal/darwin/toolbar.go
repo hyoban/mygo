@@ -867,8 +867,8 @@ func (w *window) ToolbarItemBounds(name string) (platform.Rect, bool) {
 		if view == 0 || send(view, "window") == 0 || sendBool(view, "isHiddenOrHasHiddenAncestor") {
 			return
 		}
-		in := msgRectToView(view, sel("convertRect:toView:"), msgRect(view, sel("bounds")), 0)
-		content := msgRectToView(w.view, sel("convertRect:toView:"), msgRect(w.view, sel("bounds")), 0)
+		in := msgConvertRectView(view, sel("convertRect:toView:"), msgRect(view, sel("bounds")), 0)
+		content := msgConvertRectView(w.view, sel("convertRect:toView:"), msgRect(w.view, sel("bounds")), 0)
 		top := content.Origin.Y + content.Size.Height
 		r = platform.Rect{X: int(in.Origin.X - content.Origin.X), Y: int(top - in.Origin.Y - in.Size.Height),
 			Width: int(in.Size.Width), Height: int(in.Size.Height)}

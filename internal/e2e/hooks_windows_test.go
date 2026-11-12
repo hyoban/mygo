@@ -94,6 +94,7 @@ func deactivateApp() bool                                        { return false 
 func material(*mygo.Window) (string, int, float64, bool, bool)   { return "", 0, 0, false, false }
 func materialState(*mygo.Window) (int, bool)                     { return 0, false }
 func roundedBacking(*mygo.Window) (bool, float64, float64, bool) { return false, 0, 0, false }
+func windowBacking(*mygo.Window) (bool, float64, bool)           { return false, 0, false }
 func appActive() (bool, bool)                                    { return false, false }
 
 // WebView2 opens DevTools in a window of its own.
@@ -354,6 +355,8 @@ func popupItemEnabled(label string) (enabled, ok bool) {
 // themselves here (GTK's filtering, IMM32's VK_PROCESSKEY), which a
 // composition the test makes up does not show.
 func pressKey(*mygo.Window, uint16, string) bool { return false }
+
+func pressKeyComposing(*mygo.Window, uint16, string, string, string) bool { return false }
 
 // dragFiles drags files from another application to (x, y) of a window of
 // native UI and drops them, as OLE does, waiting for the target to answer.

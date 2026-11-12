@@ -48,6 +48,9 @@ type Backend struct {
 	hotkeys          map[int]string
 	clipboard        transfer.Data
 	clipboardRelease func()
+	// ClipboardConcealed is whether the last write marked its content
+	// confidential.
+	ClipboardConcealed bool
 	// ClipboardError injects a failed write while preserving existing ownership.
 	ClipboardError error
 	// ClipboardDuringFlush simulates a toolkit pumping a nested event loop
@@ -69,9 +72,10 @@ type Backend struct {
 	UILanguages   []string
 	UIRightToLeft bool
 	// Watching reports whether power events were asked for, Awake counts the
-	// KeepAwake calls not released yet.
+	// KeepAwake calls not released yet, and Running the KeepRunning calls.
 	Watching bool
 	Awake    int
+	Running  int
 	// Playing is what NowPlaying.Set showed last, nil once removed, and
 	// NowPlayingSets counts the calls.
 	Playing        *platform.NowPlayingInfo
@@ -253,6 +257,11 @@ func (b *Backend) QuitRequested() bool {
 	return false
 }
 
+// EndSession simulates the OS ending the session (WM_ENDSESSION,
+// applicationWillTerminate:): the app is told it terminates, and its event
+// loop does not stop first.
+func (b *Backend) EndSession() { b.h.Terminating() }
+
 // SetNoSessionState makes the pages keep no session state, as
 // WebView2's: SessionState returns nil and RestoreSessionState fails.
 func (b *Backend) SetNoSessionState(v bool) { b.mu.Lock(); b.noSession = v; b.mu.Unlock() }
@@ -273,7 +282,8 @@ func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler)
 	}
 	if !o.Frameless && (o.TitleBarStyle == "hidden" || o.TitleBarStyle == "hiddenInset") && !o.HideWindowButtons {
 		// Three buttons 46 wide at the top right, as on Windows.
-		w.TitleBarRoom = platform.TitleBar{Height: cmp.Or(o.TitleBarHeight, 32), Right: 138}
+		h := cmp.Or(o.TitleBarHeight, 32)
+		w.TitleBarRoom = platform.TitleBar{Height: h, Right: 138, Bottom: h}
 	}
 	if o.Flyout != nil {
 		w.place(*o.Flyout, platform.Size{Width: o.Width, Height: o.Height})
@@ -535,6 +545,7 @@ type Window struct {
 	closed    bool
 	devtools  bool
 	pid       int  // SetProcessID
+	gpuPID    int  // SetGPUProcessID
 	audible   bool // SetAudible
 	muted     bool // SetAudioMuted
 	// capture is the page's capture of each kind (SetCapture).
@@ -573,6 +584,9 @@ type Window struct {
 	// MaximizeButton is where the content last said it shows the maximize
 	// button.
 	MaximizeButton platform.RectF
+	// InputRegion is what SetInputRegion set last: nil for all of the
+	// window.
+	InputRegion []platform.Rect
 	// AsyncFunction answers CallAsyncFunction.
 	AsyncFunction func(body string) (string, error)
 	// AsyncCallback, when set, receives CallAsyncFunction calls to answer
@@ -749,6 +763,8 @@ func (w *Window) SetActiveAppearance(v bool)      { w.mu.Lock(); w.active = v; w
 
 func (w *Window) SetWindowButtonsTheme(string) {}
 
+func (w *Window) SetInputRegion(r []platform.Rect) { w.mu.Lock(); w.InputRegion = r; w.mu.Unlock() }
+
 // ActiveAppearance reports what SetActiveAppearance set last.
 func (w *Window) ActiveAppearance() bool             { w.mu.Lock(); defer w.mu.Unlock(); return w.active }
 func (w *Window) SetMenu(m *platform.Menu)           { w.mu.Lock(); w.menu = m; w.mu.Unlock() }
@@ -770,6 +786,7 @@ func (w *Window) Zoom() float64                      { w.mu.Lock(); defer w.mu.U
 func (w *Window) SetUserAgent(string)                {}
 func (w *Window) UserAgent() string                  { return "fake" }
 func (w *Window) ProcessID() int                     { w.mu.Lock(); defer w.mu.Unlock(); return w.pid }
+func (w *Window) GPUProcessID() int                  { w.mu.Lock(); defer w.mu.Unlock(); return w.gpuPID }
 func (w *Window) IsAudible() bool                    { w.mu.Lock(); defer w.mu.Unlock(); return w.audible }
 func (w *Window) SetAudioMuted(v bool)               { w.mu.Lock(); w.muted = v; w.mu.Unlock() }
 func (w *Window) IsAudioMuted() bool                 { w.mu.Lock(); defer w.mu.Unlock(); return w.muted }
@@ -824,6 +841,10 @@ func (w *Window) RestoreSessionState(state []byte) bool {
 // SetProcessID sets the process ID the page reports, as a backend whose
 // web view runs in a process of that ID; 0, the default, is none known.
 func (w *Window) SetProcessID(pid int) { w.mu.Lock(); w.pid = pid; w.mu.Unlock() }
+
+// SetGPUProcessID sets the GPU process ID the page reports
+// (GPUProcessID); 0, the default, is none known.
+func (w *Window) SetGPUProcessID(pid int) { w.mu.Lock(); w.gpuPID = pid; w.mu.Unlock() }
 
 // SetAudible sets whether the page plays sound (IsAudible) and reports it
 // to the handler (AudibleChanged), as a backend does whenever the page
@@ -1091,16 +1112,16 @@ func (d dialogs) ShowMessageBox(_ platform.Window, o *platform.MessageBoxOptions
 type clipboard struct{ b *Backend }
 
 func (c clipboard) ReadText() string   { b, _ := c.b.clipboard.Read(transfer.Text); return string(b) }
-func (c clipboard) WriteText(s string) { _ = c.WriteData(transfer.TextData(s), nil) }
+func (c clipboard) WriteText(s string) { _ = c.WriteData(transfer.TextData(s), false, nil) }
 func (c clipboard) ReadHTML() string   { b, _ := c.b.clipboard.Read(transfer.HTML); return string(b) }
 func (c clipboard) WriteHTML(s string) {
-	_ = c.WriteData(transfer.New(transfer.NewItem(transfer.Bytes(transfer.HTML, []byte(s)))), nil)
+	_ = c.WriteData(transfer.New(transfer.NewItem(transfer.Bytes(transfer.HTML, []byte(s)))), false, nil)
 }
 func (c clipboard) ReadImage() []byte { b, _ := c.b.clipboard.Read(transfer.PNG); return b }
 func (c clipboard) WriteImage(b []byte) error {
-	return c.WriteData(transfer.New(transfer.NewItem(transfer.Bytes(transfer.PNG, b))), nil)
+	return c.WriteData(transfer.New(transfer.NewItem(transfer.Bytes(transfer.PNG, b))), false, nil)
 }
-func (c clipboard) Clear() { _ = c.WriteData(transfer.Data{}, nil) }
+func (c clipboard) Clear() { _ = c.WriteData(transfer.Data{}, false, nil) }
 func (c clipboard) AvailableFormats() []string {
 	var out []string
 	for _, f := range c.Formats() {
@@ -1118,12 +1139,12 @@ func (c clipboard) ReadData(formats []transfer.Format) (transfer.Data, error) {
 	}
 	return c.b.clipboard.Materialize(formats)
 }
-func (c clipboard) WriteData(d transfer.Data, released func()) error {
+func (c clipboard) WriteData(d transfer.Data, concealed bool, released func()) error {
 	if c.b.ClipboardError != nil {
 		return c.b.ClipboardError
 	}
 	previous := c.b.clipboardRelease
-	c.b.clipboard, c.b.clipboardRelease = d, released
+	c.b.clipboard, c.b.ClipboardConcealed, c.b.clipboardRelease = d, concealed, released
 	if previous != nil {
 		previous()
 	}
@@ -1181,12 +1202,28 @@ func (shell) TrashItem(path string) error {
 	return nil
 }
 
+// Previewed are the paths PreviewItem was given.
+var Previewed []string
+
+func (shell) PreviewItem(path string) error {
+	Previewed = append(Previewed, path)
+	return nil
+}
+
 // Opened are the paths OpenApplication was given.
 var Opened []string
 
 func (shell) OpenApplication(path string) error {
 	Opened = append(Opened, path)
 	return nil
+}
+
+// DefaultAppURLs are the URLs DefaultApp was asked about, in order.
+var DefaultAppURLs []string
+
+func (shell) DefaultApp(url string) (platform.Application, error) {
+	DefaultAppURLs = append(DefaultAppURLs, url)
+	return platform.Application{Name: "Default", ID: "app.default", Path: "/Applications/Default.app"}, nil
 }
 
 // FileIcon returns a transparent PNG of the size asked for, or the error of
@@ -1213,6 +1250,12 @@ func (p power) KeepAwake(display bool, reason string) func() {
 	p.b.Awake++
 	p.b.mu.Unlock()
 	return func() { p.b.mu.Lock(); p.b.Awake--; p.b.mu.Unlock() }
+}
+func (p power) KeepRunning(reason string) func() {
+	p.b.mu.Lock()
+	p.b.Running++
+	p.b.mu.Unlock()
+	return func() { p.b.mu.Lock(); p.b.Running--; p.b.mu.Unlock() }
 }
 func (power) OnBattery() bool         { return false }
 func (power) IdleTime() time.Duration { return 42 * time.Second }

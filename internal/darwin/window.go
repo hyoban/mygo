@@ -77,7 +77,13 @@ type window struct {
 	// the system's window color, which a layer cannot follow: it is
 	// resolved again when the appearance changes (fillSystemBacking).
 	systemBacking bool
-	parent        *window
+	// glassClear tells that the glass made the window clear
+	// (clearForGlass), an opaque one or the content view of a rounded one,
+	// whose color waits in backing, retained, for the glass to go: 0 for
+	// the system's (systemBacking).
+	glassClear bool
+	backing    id
+	parent     *window
 	// hiddenWithParent tells that a child window was ordered out as its
 	// parent hid or miniaturized (hideChildren), at hiddenRank among its
 	// siblings, front to back, to show again with it; orderPending that
@@ -85,6 +91,10 @@ type window struct {
 	hiddenWithParent bool
 	hiddenRank       int
 	orderPending     bool
+	// hidMiniaturized tells that Hide ordered the window out while it
+	// was miniaturized, which it then no longer shows as (IsVisible),
+	// until it shows or deminiaturizes again.
+	hidMiniaturized bool
 	// onTop is what AlwaysOnTop asked for, which the window's level
 	// follows, or its parent's when higher (applyLevel). attached tells
 	// that a child window is an AppKit child window of its parent, which
@@ -104,6 +114,13 @@ type window struct {
 	// a window was modal to it as it showed (holdPopover).
 	popover, popoverController  id
 	popoverClosing, popoverHeld bool
+	// ignoreMouse is SetIgnoreMouseEvents', and inputRegion
+	// SetInputRegion's (input_region.go), nil for none, whose tracking
+	// area is regionTracking; ignoring is whether the window lets the
+	// mouse through, as either set it last.
+	ignoreMouse, ignoring bool
+	inputRegion           []platform.Rect
+	regionTracking        id
 
 	lastMouseDown id
 	dropped       []string         // DroppedFiles
@@ -127,9 +144,12 @@ type window struct {
 	// layer cutting pane to corners of different radii.
 	webViews []*window
 	host     *window
-	clip     id
-	pane     id
-	mask     id
+	// foreign is set for a view of a native module that the surface shows
+	// as it shows a web view (EmbedView): web is that view, not WebKit's.
+	foreign bool
+	clip    id
+	pane    id
+	mask    id
 	// pointerIn tells that the page of a web view has the pointer, where
 	// nothing the content painted covers it.
 	pointerIn bool
@@ -257,10 +277,11 @@ func (w *window) create() {
 	// A child window takes its parent's level when that is higher.
 	w.onTop = o.AlwaysOnTop
 	w.applyLevel()
-	w.fillWindow(content)
+	radius := 0
 	if o.Frameless {
-		w.roundContent(o.CornerRadius)
+		radius = o.CornerRadius
 	}
+	w.fillWindow(content, radius)
 
 	if o.Center {
 		send(w.win, "center")
@@ -312,8 +333,7 @@ func (w *window) createFlyout() {
 		// Over the windows of other apps, as the menus of the menu bar.
 		send(w.win, "setLevel:", nsPopUpMenuWindowLevel)
 	}
-	w.fillWindow(content)
-	w.roundContent(w.flyout.Radius)
+	w.fillWindow(content, w.flyout.Radius)
 	w.register()
 	w.PlaceFlyout(w.flyout, w.flyoutSize)
 }
@@ -366,7 +386,10 @@ func (w *window) fillSystemBacking() {
 // anew, once the appearance or the system's colors changed.
 func (b *Backend) refreshSystemBackings() {
 	for _, w := range b.byNSWindow {
-		if w.systemBacking {
+		if w.popover != 0 {
+			send(w.popover, "setAppearance:", uintptr(send(b.app, "effectiveAppearance")))
+		}
+		if w.systemBacking && !w.glassClear {
 			w.fillSystemBacking()
 		}
 	}
@@ -389,8 +412,9 @@ func (w *window) roundEffect() {
 	send(el, "setMasksToBounds:", 1)
 }
 
-// fillWindow gives a new window its look and its web view or surface.
-func (w *window) fillWindow(content NSRect) {
+// fillWindow gives a new window its look, its corners of radius
+// (roundContent) and its web view or surface.
+func (w *window) fillWindow(content NSRect, radius int) {
 	o := w.opts
 	send(w.win, "setHasShadow:", boolArg(o.HasShadow))
 	if o.Opacity < 1 {
@@ -408,6 +432,8 @@ func (w *window) fillWindow(content NSRect) {
 		send(w.win, "makeFirstResponder:", uintptr(w.surface.view))
 	}
 	send(w.win, "setContentView:", uintptr(w.view))
+	// Before the material: the glass clears the color roundContent moves.
+	w.roundContent(radius)
 	if o.Vibrancy != "" {
 		w.SetVibrancy(o.Vibrancy)
 	}
@@ -724,6 +750,9 @@ func (w *window) cleanup() {
 	delete(b.byDelegate, w.delegate)
 	delete(b.byWebView, w.web)
 	delete(b.byNSWindow, w.win)
+	if inputRegionClosed != nil {
+		inputRegionClosed(w)
+	}
 	w.forgetDrag()
 	release(w.ucc)
 	for _, j := range printJobs {
@@ -737,6 +766,7 @@ func (w *window) cleanup() {
 		w.surface.destroy()
 	}
 	release(w.effect)
+	release(w.backing)
 	release(w.web)
 	release(w.view)
 	// AppKit is still closing the window; let the pool release it.
@@ -1167,17 +1197,22 @@ func (w *window) Hide() {
 		return
 	}
 	w.hiddenWithParent = false
+	w.hidMiniaturized = w.IsMinimized()
 	// Attached, AppKit would show it again with its parent.
 	w.detach()
 	send(w.win, "orderOut:", 0)
 	w.hideChildren()
 }
 
+// IsVisible reports whether Show (or the options) showed the window and
+// Hide did not hide it since. AppKit's isVisible is false for a window
+// in the Dock, which counts as shown here, as IsWindowVisible on Windows
+// and gtk_widget_get_visible on Linux count a minimized window (#1542).
 func (w *window) IsVisible() bool {
 	if w.popover != 0 {
 		return sendBool(w.popover, "isShown")
 	}
-	return sendBool(w.win, "isVisible")
+	return sendBool(w.win, "isVisible") || !w.hidMiniaturized && w.IsMinimized()
 }
 
 func (w *window) Focus() {
@@ -1191,7 +1226,7 @@ func (w *window) Focus() {
 		w.Show() // the key window only when it takes the keyboard
 		return
 	}
-	w.hiddenWithParent = false
+	w.hiddenWithParent, w.hidMiniaturized = false, false
 	send(w.win, "makeKeyAndOrderFront:", 0)
 	if !w.opts.Panel {
 		send(w.b.app, "activateIgnoringOtherApps:", 1)
@@ -1240,6 +1275,11 @@ func (w *window) SetBackgroundColor(c platform.Color) {
 		case w.host != nil:
 			// A web view's window is its host's.
 			w.clipBackground(c)
+		case w.glassClear:
+			// The glass shows what is behind the window, the color once it goes.
+			w.systemBacking = false
+			release(w.backing)
+			w.backing = retain(nsColor(c))
 		case w.radius > 0:
 			// The window stays clear, its corners cut off (roundContent).
 			w.systemBacking = false
@@ -1295,11 +1335,10 @@ func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 }
 
 // SetIcon does nothing: macOS windows show no icon of their own.
-func (w *window) SetIcon([]byte) error        { return nil }
-func (w *window) Opacity() float64            { return msgFloat(w.win, sel("alphaValue")) }
-func (w *window) SetHasShadow(v bool)         { send(w.win, "setHasShadow:", boolArg(v)) }
-func (w *window) HasShadow() bool             { return sendBool(w.win, "hasShadow") }
-func (w *window) SetIgnoreMouseEvents(v bool) { send(w.win, "setIgnoresMouseEvents:", boolArg(v)) }
+func (w *window) SetIcon([]byte) error { return nil }
+func (w *window) Opacity() float64     { return msgFloat(w.win, sel("alphaValue")) }
+func (w *window) SetHasShadow(v bool)  { send(w.win, "setHasShadow:", boolArg(v)) }
+func (w *window) HasShadow() bool      { return sendBool(w.win, "hasShadow") }
 
 func (w *window) SetContentProtection(v bool) {
 	sharing := uintptr(1) // NSWindowSharingReadOnly
@@ -1360,6 +1399,9 @@ func (w *window) SetVibrancy(material string) {
 			send(w.view, "addSubview:positioned:relativeTo:", uintptr(w.effect), ^uintptr(0), 0) // NSWindowBelow
 			send(w.web, "setValue:forKey:", uintptr(nsBool(false)), uintptr(nsString("drawsBackground")))
 			w.roundEffect()
+			if glass {
+				w.clearForGlass()
+			}
 		}
 		if glass {
 			send(w.effect, "setStyle:", g.style)
@@ -1431,7 +1473,53 @@ func (w *window) removeEffect() {
 		send(w.effect, "removeFromSuperview")
 		release(w.effect)
 		w.effect, w.glass = 0, false
+		w.restoreBacking()
 	}
+}
+
+// clearForGlass makes a window that is not transparent clear while it
+// shows the glass. NSGlassEffectView draws what is behind it in the
+// window, which is the window's own color in an opaque one, where
+// NSVisualEffectView blends with what is behind the window. The color of
+// a rounded window is on its content view (roundContent). A popover's
+// window is AppKit's.
+func (w *window) clearForGlass() {
+	if w.glassClear || w.opts.Transparent || w.popover != 0 {
+		return
+	}
+	w.glassClear = true
+	if w.radius > 0 {
+		layer := send(w.view, "layer")
+		if c := send(layer, "backgroundColor"); c != 0 && !w.systemBacking {
+			w.backing = retain(send(class("NSColor"), "colorWithCGColor:", uintptr(c)))
+		}
+		send(layer, "setBackgroundColor:", 0)
+	} else {
+		w.backing = retain(send(w.win, "backgroundColor"))
+		send(w.win, "setOpaque:", 0)
+		send(w.win, "setBackgroundColor:", uintptr(send(class("NSColor"), "clearColor")))
+	}
+	send(w.win, "invalidateShadow")
+}
+
+// restoreBacking gives the window back the color clearForGlass took.
+func (w *window) restoreBacking() {
+	if !w.glassClear {
+		return
+	}
+	w.glassClear = false
+	switch {
+	case w.radius > 0 && w.systemBacking:
+		w.fillSystemBacking()
+	case w.radius > 0:
+		send(send(w.view, "layer"), "setBackgroundColor:", uintptr(send(w.backing, "CGColor")))
+	default:
+		send(w.win, "setBackgroundColor:", uintptr(w.backing))
+		send(w.win, "setOpaque:", 1)
+	}
+	release(w.backing)
+	w.backing = 0
+	send(w.win, "invalidateShadow")
 }
 
 func (w *window) SetMenu(*platform.Menu) {}
@@ -1447,11 +1535,11 @@ func (w *window) hiddenTitleBar() bool {
 }
 
 // TitleBar returns the room the traffic lights take, from the left edge to
-// the right edge of the zoom button, in the title bar, which is as tall as
-// the window's own or, with TrafficLightPosition, leaves as much room below
-// them as above. They hide in full screen, and with HideWindowButtons. In
-// full screen SetToolbar's toolbar stays over the top of the content,
-// without them: its height.
+// the right edge of the zoom button and from the top edge to their bottom
+// edge, in the title bar, which is as tall as the window's own or, with
+// TrafficLightPosition, leaves as much room below them as above. They hide
+// in full screen, and with HideWindowButtons. In full screen SetToolbar's
+// toolbar stays over the top of the content, without them: its height.
 func (w *window) TitleBar() platform.TitleBar {
 	if w.hiddenTitleBar() && !w.closed && w.IsFullScreen() && w.toolbar != nil {
 		frame := msgRect(w.win, sel("frame"))
@@ -1470,12 +1558,23 @@ func (w *window) TitleBar() platform.TitleBar {
 	if p := w.trafficLights; p != nil {
 		// Where layoutTrafficLights puts them, which may not have run yet.
 		right := float64(p.X) + z.Origin.X - c.Origin.X + z.Size.Width
-		return platform.TitleBar{Height: int(math.Round(c.Size.Height + 2*float64(p.Y))), Left: int(math.Ceil(right))}
+		return platform.TitleBar{
+			Height: int(math.Round(c.Size.Height + 2*float64(p.Y))),
+			Left:   int(math.Ceil(right)),
+			Bottom: int(math.Ceil(float64(p.Y) + c.Size.Height)),
+		}
 	}
 	frame := msgRect(w.win, sel("frame"))
 	content := msgRect(w.win, sel("contentLayoutRect"))
 	height := frame.Size.Height - content.Origin.Y - content.Size.Height
-	return platform.TitleBar{Height: int(math.Round(height)), Left: int(math.Ceil(z.Origin.X + z.Size.Width))}
+	// The close button in the window's coordinates, whose origin is the
+	// bottom-left corner of its frame.
+	lights := msgConvertRectView(closeBtn, sel("convertRect:toView:"), NSRect{Size: c.Size}, 0)
+	return platform.TitleBar{
+		Height: int(math.Round(height)),
+		Left:   int(math.Ceil(z.Origin.X + z.Size.Width)),
+		Bottom: int(math.Ceil(frame.Size.Height - lights.Origin.Y)),
+	}
 }
 
 func (w *window) TitleBarDoubleClicked() {
@@ -1698,6 +1797,16 @@ func (w *window) ProcessID() int {
 		return 0
 	}
 	return int(int32(send(w.web, "_webProcessIdentifier")))
+}
+
+// GPUProcessID returns WebKit's GPU process from its private
+// -[WKWebView _gpuProcessIdentifier] (a pid_t), 0 when WebKit doesn't
+// answer it or hasn't started the process yet.
+func (w *window) GPUProcessID() int {
+	if !respondsTo(w.web, "_gpuProcessIdentifier") {
+		return 0
+	}
+	return int(int32(send(w.web, "_gpuProcessIdentifier")))
 }
 
 // IsAudible reports WebKit's private -[WKWebView _isPlayingAudio]
@@ -2326,6 +2435,9 @@ func registerWindowClasses() {
 						w.h.Unmaximized()
 					}
 				}
+				if inputRegionMoved != nil {
+					inputRegionMoved(w) // the region moved under the pointer
+				}
 				w.h.Resized()
 			}),
 			method("windowWillMove:", func(self id, _ objc.SEL, n id) {
@@ -2337,6 +2449,9 @@ func registerWindowClasses() {
 			}),
 			method("windowDidMove:", func(self id, _ objc.SEL, n id) {
 				if w := b().windowFor(self); w != nil {
+					if inputRegionMoved != nil {
+						inputRegionMoved(w)
+					}
 					w.h.Moved()
 				}
 			}),
@@ -2357,6 +2472,7 @@ func registerWindowClasses() {
 			}),
 			method("windowDidDeminiaturize:", func(self id, _ objc.SEL, n id) {
 				if w := b().windowFor(self); w != nil {
+					w.hidMiniaturized = false
 					w.orderChildrenLater()
 					w.h.Restored()
 				}

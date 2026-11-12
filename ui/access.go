@@ -47,6 +47,12 @@ const (
 	RoleTabList
 	RoleTab
 	RoleSplitter
+	// RoleStatus is a live region of advisory information, as "3 rows
+	// selected" or "Saved": when its text changes, screen readers read the
+	// whole of it out, politely, after what they are reading. Give it a
+	// Key when elements come before it, so that it is the same status from
+	// frame to frame. What a status shows as assistive technology comes,
+	// or as it first shows, is not read.
 	RoleStatus
 	RoleTable
 	RoleRow
@@ -127,6 +133,14 @@ const (
 	// navigation bar: screen readers list it among the window's
 	// landmarks, and jump to it.
 	RoleNavigation
+	// RoleGrid is a table whose cells take the focus and the arrow keys,
+	// as a spreadsheet's, where RoleTable is one to read; RoleTreeGrid is
+	// a grid whose rows open and close as a tree's items do (Expanded,
+	// Level). Their rows, cells and headers are RoleRow, RoleCell,
+	// RoleColumnHeader and RoleRowHeader, as a table's, and the rows of a
+	// List shown as one are its rows.
+	RoleGrid
+	RoleTreeGrid
 	// RoleListBox is a list of options to choose from, as ARIA's listbox,
 	// and RoleOption one of its options, selected with Checked, as ARIA's
 	// aria-selected: what a list of your own offers, such as suggestions
@@ -135,7 +149,54 @@ const (
 	// are list boxes.
 	RoleListBox
 	RoleOption
+	// RoleDeletion and RoleInsertion hold content removed from or added
+	// to a document, as HTML's del and ins, ARIA's deletion and
+	// insertion: the removed and added lines of a diff, or an old price
+	// struck out beside the new one. Screen readers read their text with
+	// "deletion" or "insertion" rather than as plain text. They take no
+	// Label: the text inside them is what they hold.
+	//
+	//	ui.Row(c).Gap(6).Children(func() {
+	//		ui.Text(c, "$40").Strikethrough().Role(ui.RoleDeletion)
+	//		ui.Text(c, "$30").Role(ui.RoleInsertion)
+	//	})
+	RoleDeletion
+	RoleInsertion
+	// RoleTabPanel holds the content of a tab, as ARIA's tabpanel does in
+	// its Tabs pattern: name it after its tab with Label (or LabelledBy,
+	// a text), and have the tab point to it with Controls, so that screen
+	// readers can move between a tab and its content.
+	//
+	//	panel := ui.Column(c).Role(ui.RoleTabPanel).Label("Settings").Children(content)
+	//	tab.Controls(panel)
+	RoleTabPanel
+	// RoleMain is the landmark holding the main content of a window, as
+	// HTML's main: what the window is for, apart from its bars and
+	// sidebars. A window has one, and a Label is not needed. Screen
+	// readers list it among the window's landmarks, and jump to it.
+	RoleMain
+	// RoleBanner is the landmark holding the top bar of a window, with
+	// the app's name or the window's title, as a page's header. A window
+	// has at most one. Screen readers list it among the window's
+	// landmarks, and jump to it.
+	RoleBanner
+	// RoleContentInfo is the landmark holding information about the
+	// content of a window, as its footer or status area (the document's
+	// word count, its author, a copyright), as a page's footer. A window
+	// has at most one. Screen readers list it among the window's
+	// landmarks, and jump to it.
+	RoleContentInfo
+	// RoleComplementary is the landmark holding content that completes
+	// the main content and makes sense on its own, as a sidebar of
+	// related items or an inspector, as HTML's aside. Name it with Label
+	// when a window has several. Screen readers list it among the
+	// window's landmarks, and jump to it.
+	RoleComplementary
 )
+
+// tabular reports whether elements of a role hold rows of cells: tables,
+// grids and tree grids.
+func tabular(r Role) bool { return r == RoleTable || r == RoleGrid || r == RoleTreeGrid }
 
 // Role sets what the element is to assistive technology, for an element
 // drawn as a widget it is not built from, such as a custom toggle.
@@ -269,6 +330,30 @@ func (e *node) Level(n int) *node {
 	return e
 }
 
+// Orientation tells assistive technology which way the element runs, as
+// ARIA's aria-orientation: Vertical for a slider, separator, splitter,
+// toolbar, tab list or menu of your own going up and down, which screen
+// readers then read as vertical, Horizontal for one going across. It only tells it: the view lays the element out and
+// handles its keys itself (FocusGroup). A slider or a separator told
+// neither runs across, a separator taller than wide up and down; other
+// elements have no orientation. A SliderBase going up says so itself
+// (Vertical).
+//
+//	ui.Box(c).Size(4, 200).Draw(drawTrack).
+//		Role(ui.RoleSlider).Label("Volume").Range(0, 100, app.volume).
+//		Focusable().Orientation(ui.Vertical)
+//
+// Any other value, as Horizontal|Vertical, takes it back.
+func (e *node) Orientation(o Orientation) *node {
+	switch o {
+	case Horizontal, Vertical:
+		e.orient = o
+	default:
+		e.orient = 0
+	}
+	return e
+}
+
 // KeyShortcuts tells assistive technology a key, with exactly the
 // modifiers mods, that presses or focuses the element, as ARIA's
 // aria-keyshortcuts: the window's shortcut that runs a toolbar button's
@@ -291,6 +376,102 @@ func (e *node) KeyShortcuts(mods Modifiers, key Key) *node {
 		s = e.keyShortcuts + " " + s
 	}
 	e.keyShortcuts = s
+	return e
+}
+
+// RowCount tells assistive technology how many rows a table, grid or tree
+// grid of your own has, built or not, header rows included, as ARIA's
+// aria-rowcount: one that builds only the rows in view says how many it
+// has, which screen readers read with the rows' RowIndex, as "row 4,121
+// of 10,000". The rows of a List and a Table say which of all they are
+// themselves.
+func (e *node) RowCount(n int) *node {
+	e.accGrid[0] = int32(max(n, 0))
+	return e
+}
+
+// ColumnCount tells assistive technology how many columns a table, grid
+// or tree grid of your own has, built or not (aria-colcount).
+func (e *node) ColumnCount(n int) *node {
+	e.accGrid[1] = int32(max(n, 0))
+	return e
+}
+
+// RowIndex tells assistive technology the place of a row, or of a cell,
+// among all the rows of its table, grid or tree grid, from 1 for the
+// first, header rows included, as ARIA's aria-rowindex: for one that
+// builds only the rows in view, with its RowCount. A cell takes its row's.
+func (e *node) RowIndex(i int) *node {
+	e.accGrid[2] = int32(max(i, 0))
+	return e
+}
+
+// ColumnIndex tells assistive technology the place of a cell or a column
+// header among all the columns of its table, grid or tree grid, from 1
+// (aria-colindex): for one that builds only the columns in view, or
+// leaves some out. Cells without one follow the one before them, after
+// the columns it covers (ColumnSpan).
+func (e *node) ColumnIndex(i int) *node {
+	e.accGrid[3] = int32(max(i, 0))
+	return e
+}
+
+// PositionInSet tells assistive technology which item of its set the
+// element is, pos from 1, and how many items the set has, size, as ARIA's
+// aria-posinset and aria-setsize: for an item of a list, list box, tree,
+// menu or tab list of your own whose set is not what is built around it,
+// as one built only where it shows, or a tree laid out flat in one
+// column (with Level), so that screen readers read "3 of 50". Either at
+// 0 or less is not given: the place the element's widget gives it, if
+// any, stands.
+//
+//	for i := app.first; i < app.last; i++ { // only those in view
+//		ui.Row(c).Role(ui.RoleOption).PositionInSet(i+1, len(app.results)).
+//			Children(func() { ui.Text(c, app.results[i]) })
+//	}
+//
+// It wins over the place a ComboboxBase, SelectBase, MenuBase, Tree or
+// GridView gives its items, which counts those it builds, as for a
+// combobox showing the first 50 of 1,000 results. A List's rows keep
+// theirs, which say which of all its rows they are, built or not, and
+// place the rows of its table on macOS and Windows; a row or a cell of a
+// grid of your own says its place with RowIndex and ColumnIndex.
+func (e *node) PositionInSet(pos, size int) *node {
+	e.accSet = [2]int32{int32(max(pos, 0)), int32(max(size, 0))}
+	return e
+}
+
+// AccessSelected tells assistive technology whether the element, a tab,
+// an option, a row, a cell or an item of a tree of your own, is
+// selected, as ARIA's aria-selected, without the accent background and
+// text color Selected paints: for one that shows its choice its own way,
+// as a tab underlined or a row with a check mark.
+//
+//	tab := ui.ButtonBase(c).Role(ui.RoleTab).Label(name).AccessSelected(i == app.tab)
+//	if i == app.tab {
+//		tab.Bold()
+//	}
+//
+// It sets the state Selected sets, which Checked also sets on these
+// roles, so every platform reads it as Selected's: a row or a cell saying
+// whether it is selected, false or true, is one its table or grid
+// chooses among others (Selectable). It only tells: the view shows the
+// choice, and changes it as the element is clicked.
+func (e *node) AccessSelected(on bool) *node {
+	return e.Checked(on)
+}
+
+// Multiselectable tells assistive technology whether the user chooses
+// several of the items of the element, a list, grid, tree or tree grid
+// of your own, as ARIA's aria-multiselectable: screen readers offer to
+// choose more than one. Its rows or items say which are chosen with
+// Checked, or Selected, which shows it too. Lists, tables and grid views
+// with a Selection tell it themselves.
+func (e *node) Multiselectable(on bool) *node {
+	e.chooseMany = on
+	if on {
+		e.choosesItems = true // and its items are chosen
+	}
 	return e
 }
 
@@ -347,10 +528,20 @@ const (
 // opens, as a button opening a list of options (PopupListBox) or a menu
 // (PopupMenu), which Expanded says shows: screen readers read it with the
 // element ("pop-up button", "menu button") and offer to open it.
-// PopupNone takes it back.
+// PopupNone takes it back. Menu buttons (Menu, PopoverMenuButton,
+// MenuButton, MenuBase) tell PopupMenu themselves; HasPopup, before or
+// after, wins over it.
 func (e *node) HasPopup(kind Popup) *node {
-	e.hasPopup = kind
+	e.hasPopup, e.popupSet = kind, true
 	return e
+}
+
+// opensMenu tells assistive technology that the element, a menu button,
+// opens a menu (PopupMenu), unless the app said otherwise (HasPopup).
+func (e *node) opensMenu() {
+	if !e.popupSet {
+		e.hasPopup = PopupMenu
+	}
 }
 
 // SortDirection is the order a table's rows are sorted in by a column
@@ -384,10 +575,30 @@ func (e *node) accessRole() (platform.AccessRole, bool) {
 	case RoleNone:
 		return 0, false
 	case RoleAuto:
+	case RoleListItem:
+		// The rows of a List shown as a table or a grid are its rows.
+		if e.listRow && e.parent != nil && tabular(e.parent.role) {
+			return platform.RoleRow, true
+		}
+		return platform.RoleListItem, true
 	case RoleListBox:
 		return platform.RoleList, true // choosing its items (accessDetails)
 	case RoleOption:
 		return platform.RoleListItem, true
+	case RoleDeletion:
+		return platform.RoleDeletion, true
+	case RoleInsertion:
+		return platform.RoleInsertion, true
+	case RoleTabPanel:
+		return platform.RoleTabPanel, true
+	case RoleMain:
+		return platform.RoleMain, true
+	case RoleBanner:
+		return platform.RoleBanner, true
+	case RoleContentInfo:
+		return platform.RoleContentInfo, true
+	case RoleComplementary:
+		return platform.RoleComplementary, true
 	default:
 		return platform.AccessRole(e.role - RoleGroup), true
 	}
@@ -427,7 +638,8 @@ func leafRole(r platform.AccessRole) bool {
 		platform.RoleTabList, platform.RoleTable, platform.RoleRow, platform.RoleCell, platform.RoleColumnHeader, platform.RoleRowHeader, platform.RoleTree,
 		platform.RoleListItem, platform.RoleToolbar, platform.RoleRadioGroup, platform.RoleMenu, platform.RoleMenuBar, platform.RoleHeading, platform.RoleNavigation,
 		platform.RoleRegion, platform.RoleLog, platform.RoleTimer, platform.RoleAlert, platform.RoleSearch,
-		platform.RoleArticle:
+		platform.RoleArticle, platform.RoleGrid, platform.RoleTreeGrid, platform.RoleDeletion, platform.RoleInsertion, platform.RoleTabPanel,
+		platform.RoleMain, platform.RoleBanner, platform.RoleContentInfo, platform.RoleComplementary:
 		return false
 	}
 	return true
@@ -438,10 +650,13 @@ func leafRole(r platform.AccessRole) bool {
 // of its texts, as a name from content takes a descendant's aria-label on
 // the web: a row reads "Branch main (checked out)" rather than the "✓
 // main" drawn for it; one hidden from assistive technology
-// (AccessHidden) gives nothing. Assistive technology names elements by it
-// every frame, so a single text is returned as it is, without a copy.
+// (AccessHidden) gives nothing, nor does one that is inert, as a copy of
+// an element leaving with an Exit transition or a page a Router is
+// leaving, which the accessibility tree leaves out too. Assistive
+// technology names elements by it every frame, so a single text is
+// returned as it is, without a copy.
 func (e *node) innerText() string {
-	if e.flags&flagInvisible != 0 || e.hidden {
+	if e.flags&(flagInvisible|flagInert) != 0 || e.hidden {
 		return ""
 	}
 	if e.kind == kindText {
@@ -465,7 +680,7 @@ type innerTexts struct {
 }
 
 func (t *innerTexts) walk(e *node) {
-	if e.flags&flagInvisible != 0 || e.hidden || e.accessHidden {
+	if e.flags&(flagInvisible|flagInert) != 0 || e.hidden || e.accessHidden {
 		return
 	}
 	if e.label != "" {
@@ -479,6 +694,14 @@ func (t *innerTexts) walk(e *node) {
 	for ch := e.first; ch != nil; ch = ch.next {
 		t.walk(ch)
 	}
+}
+
+// String returns the texts joined.
+func (t *innerTexts) String() string {
+	if t.b.Len() == 0 {
+		return t.first
+	}
+	return t.b.String()
 }
 
 func (t *innerTexts) add(s string) {
@@ -517,7 +740,7 @@ func (rt *engine) accessTree() *platform.AccessTree {
 	default:
 		rt.accessElement(t, root, -1, false, &focused)
 	}
-	// A table whose cells say whether they are chosen chooses them, as
+	// A table or a grid whose cells say whether they are chosen chooses them, as
 	// ARIA's grid holds its gridcells' selection.
 	for i := range t.Nodes {
 		if n := &t.Nodes[i]; cellRole(n.Role) && n.States&platform.AccessSelectable != 0 {
@@ -525,7 +748,7 @@ func (rt *engine) accessTree() *platform.AccessTree {
 				t.Selected = l10n.In(rt.lang).Selected()
 			}
 			for p := n.Parent; p >= 0; p = t.Nodes[p].Parent {
-				if t.Nodes[p].Role == platform.RoleTable {
+				if t.Nodes[p].Role.Tabular() {
 					t.Nodes[p].States |= platform.AccessSelectable
 					break
 				}
@@ -598,12 +821,18 @@ func (rt *engine) accessElement(t *platform.AccessTree, e *node, parent int, scr
 			n.Actions |= platform.ActionScrollIntoView
 		}
 		rt.accessDetails(e, n)
+		if n.Role == platform.RoleRow && e.checked != 0 && n.States&platform.AccessSelectable == 0 {
+			chooseRow(t, len(t.Nodes)-1)
+		}
 		parent = len(t.Nodes) - 1
 		if e.kind == kindText {
 			rt.accessInline(t, e, parent)
 			return
 		}
-		if leafRole(role) {
+		// A text field describing its text itself holds elements of its
+		// own over it, as a code editor's find bar and what replaces its
+		// ranges, which are not the text: they show.
+		if leafRole(role) && (role != platform.RoleTextField || e.accFill == nil) {
 			return
 		}
 	}
@@ -641,6 +870,20 @@ func (rt *engine) accessElement(t *platform.AccessTree, e *node, parent int, scr
 	}
 }
 
+// chooseRow makes node i, a row of your own that says whether it is
+// chosen (Checked, Selected), one its table chooses, as ARIA's rows of a
+// grid with aria-selected: the table, grid or tree grid around it holds
+// the choice.
+func chooseRow(t *platform.AccessTree, i int) {
+	t.Nodes[i].States |= platform.AccessSelectable
+	for p := t.Nodes[i].Parent; p >= 0; p = t.Nodes[p].Parent {
+		if t.Nodes[p].Role.Tabular() {
+			t.Nodes[p].States |= platform.AccessSelectable
+			return
+		}
+	}
+}
+
 // pageNodeID tells the node of a web view's page from its element's.
 const pageNodeID = 0x9e3779b97f4a7c15
 
@@ -653,9 +896,12 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 	if e.segment {
 		n.States |= platform.AccessSegment
 	}
-	if e.vertical || n.Role == platform.RoleSeparator && e.h > e.w {
+	switch {
+	case e.orient == Vertical, e.orient == 0 && n.Role == platform.RoleSeparator && e.h > e.w:
 		// A slider going up, or a rule running up and down.
 		n.States |= platform.AccessVertical
+	case e.orient == Horizontal:
+		n.States |= platform.AccessHorizontal
 	}
 	if e.search {
 		n.States |= platform.AccessSearch
@@ -672,6 +918,9 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 		n.States |= platform.AccessSortOther
 	}
 	n.Description = e.description
+	if len(e.describedBy) > 0 || len(e.errorMessage) > 0 {
+		accessRelations(e, n)
+	}
 	n.RoleDescription, n.HasPopup = e.roleDescription, platform.AccessPopup(e.hasPopup)
 	for _, c := range e.controls {
 		n.Controls = append(n.Controls, c.id)
@@ -686,6 +935,14 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 	}
 	if e.setSize > 0 {
 		n.PosInSet, n.SetSize = e.setPos, e.setSize
+	}
+	// The app's own place in the set wins over its widget's, but for a
+	// List's rows below.
+	if pos := e.accSet[0]; pos > 0 {
+		n.PosInSet = int(pos)
+	}
+	if size := e.accSet[1]; size > 0 {
+		n.SetSize = int(size)
 	}
 	if e.choosesItems || e.role == RoleListBox {
 		n.States |= platform.AccessSelectable
@@ -733,6 +990,12 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 	n.Level = e.level
 	n.Value = e.accValue
 	n.KeyShortcuts = e.keyShortcuts
+	n.RowCount, n.ColCount, n.RowIndex, n.ColIndex = int(e.accGrid[0]), int(e.accGrid[1]), int(e.accGrid[2]), int(e.accGrid[3])
+	if cellRole(n.Role) {
+		// A cell covering several columns or rows of its table, as its
+		// grid lays it out (aria-colspan, aria-rowspan).
+		n.ColSpan, n.RowSpan = e.cellSpan()
+	}
 	if e.hasRange {
 		n.Min, n.Max, n.Now, n.Step = e.accRange[0], e.accRange[1], e.accRange[2], e.accStep
 	}
@@ -757,6 +1020,12 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 	// beyond its edges.
 	if st := e.st; (st.vw <= 0 || st.vh <= 0) && e.w > 0 && e.h > 0 {
 		n.States |= platform.AccessOffscreen
+	}
+	// An element of your own that shows a value it does not let the user
+	// change says so (ReadOnly), also while it is disabled.
+	readOnly := e.readOnly && e.reportsReadOnly(n.Role)
+	if readOnly {
+		n.States |= platform.AccessReadOnly
 	}
 	if disabled {
 		return
@@ -796,10 +1065,20 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 			n.SelStart, n.SelEnd = ed.selection()
 		}
 	}
+	// A text box of your own, with no editor of MyGo's, says it takes
+	// several lines (Multiline).
+	if n.Role == platform.RoleTextField && e.multiline && (e.st.editor == nil || e.flags&flagEditable == 0) {
+		n.States |= platform.AccessMultiline
+	}
 	// Custom text clients without an editor take set-value here; inputs and
 	// text areas with an editor follow the editor branch above.
-	if e.textClient != nil && (e.st == nil || e.st.editor == nil || e.flags&flagEditable == 0) {
+	if e.textClient != nil && (e.st == nil || e.st.editor == nil || e.flags&flagEditable == 0) && n.States&platform.AccessReadOnly == 0 {
 		n.Actions |= platform.ActionSetValue
+	}
+	if readOnly {
+		// Its value is not settable (Core-AAM's aria-readonly): not by
+		// assistive technology's set-value, increment and decrement.
+		n.Actions &^= platform.ActionSetValue | platform.ActionIncrement | platform.ActionDecrement
 	}
 	if e.accFill != nil {
 		e.accFill(n)
@@ -809,6 +1088,76 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 	if e.st.accessDisabled {
 		n.Actions &= platform.ActionFocus | platform.ActionScrollIntoView
 	}
+}
+
+// reportsReadOnly reports whether an element that shows a role of
+// platform r tells assistive technology that it is read-only (ReadOnly),
+// the roles ARIA's aria-readonly is supported on, with the cells, row
+// headers and column headers of a grid or a tree grid, which a table's do
+// not have. A control of MyGo's own, with its behavior, decides for itself,
+// as a text box with an editor of MyGo's does.
+func (e *node) reportsReadOnly(r platform.AccessRole) bool {
+	if r == platform.RoleTextField {
+		return e.st.editor == nil || e.flags&flagEditable == 0
+	}
+	if e.widget != "" {
+		return false
+	}
+	switch r {
+	case platform.RoleComboBox, platform.RoleCheckBox, platform.RoleSwitch, platform.RoleSlider, platform.RoleStepper,
+		platform.RoleRadioGroup, platform.RoleGrid, platform.RoleTreeGrid:
+		return true
+	case platform.RoleList:
+		return e.role == RoleListBox
+	case platform.RoleCell, platform.RoleColumnHeader, platform.RoleRowHeader:
+		// A cell of a table is only a cell; of a grid, a grid cell.
+		for p := e.parent; p != nil; p = p.parent {
+			if tabular(p.role) {
+				return p.role != RoleTable
+			}
+		}
+	}
+	return false
+}
+
+// accessRelations fills in what describes a node: the elements whose
+// text describes it (DescribedBy), after its own description, and while
+// it is invalid, those holding its error (ErrorMessage), first, as Error
+// puts its message.
+func accessRelations(e *node, n *platform.AccessNode) {
+	var desc innerTexts
+	for _, d := range e.describedBy {
+		n.DescribedBy = append(n.DescribedBy, d.id)
+		desc.add(d.describes())
+	}
+	n.Description = joinDescription(n.Description, desc.String())
+	if !e.invalid {
+		return
+	}
+	var msg innerTexts
+	for _, m := range e.errorMessage {
+		n.ErrorMessage = append(n.ErrorMessage, m.id)
+		msg.add(m.describes())
+	}
+	n.Description = joinDescription(msg.String(), n.Description)
+}
+
+// describes returns the text an element gives another it describes
+// (DescribedBy, ErrorMessage): its Label, or the texts inside it, as
+// ARIA computes a description from the elements it references, hidden
+// from assistive technology or not.
+func (e *node) describes() string {
+	if e.label != "" {
+		return e.label
+	}
+	if e.kind == kindText {
+		return e.accessText()
+	}
+	var t innerTexts
+	for ch := e.first; ch != nil; ch = ch.next {
+		t.walk(ch)
+	}
+	return t.String()
 }
 
 // accessibilityOn starts describing frames for assistive technology,
@@ -868,8 +1217,9 @@ func (rt *engine) accessAction(ev platform.SurfaceEvent) {
 		}
 		if s.flags&flagChoosable != 0 {
 			// A row of a list choosing rows: its list takes the focus for
-			// it, choosing it.
-			s.click(0)
+			// it, choosing it, as the keys would, which no RowClicked
+			// reports.
+			s.quietClick(0)
 			break
 		}
 		rt.focusOn(s)

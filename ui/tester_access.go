@@ -29,10 +29,11 @@ type AccessInfo struct {
 	// an item of a tree with children.
 	Expanded, Expandable bool
 	// Selected is set on the tab chosen, on the items of a tree and the
-	// rows of a list or a table chosen, and on the cells of a grid chosen
-	// with Checked (aria-selected), which are Selectable where their list
-	// or table chooses them; Multiselectable is set on a list or a table
-	// choosing several.
+	// rows of a list, a table or a grid chosen, and on the cells of a
+	// table or a grid chosen with Checked (aria-selected), which are
+	// Selectable where their list, table or grid chooses them;
+	// Multiselectable is set on a list, a table or a grid choosing
+	// several.
 	Selected, Selectable, Multiselectable bool
 	// Busy is set while the element's content is about to change
 	// (aria-busy).
@@ -57,9 +58,17 @@ type AccessInfo struct {
 	// controls (aria-controls), in the last frame, in the order Controls
 	// gave them: Access finds each.
 	Controls []string
-	// Vertical is set on a slider going up, and Segment on a segment of
-	// a segmented control or a group of toggles.
-	Vertical, Segment bool
+	// DescribedBy are the accessible names of the elements describing the
+	// element (aria-describedby), whose text Description holds, and
+	// ErrorMessage those of the elements holding its error
+	// (aria-errormessage), given while it is Invalid, in the order
+	// DescribedBy and ErrorMessage gave them.
+	DescribedBy, ErrorMessage []string
+	// Vertical is set on a slider going up, a separator running up and
+	// down, and an element told it is vertical (aria-orientation);
+	// Horizontal on one told it runs across (Orientation). Segment is set
+	// on a segment of a segmented control or a group of toggles.
+	Vertical, Horizontal, Segment bool
 	// Offscreen is set on an element built out of view, as the rows a
 	// list builds beyond its edges.
 	Offscreen bool
@@ -81,6 +90,16 @@ type AccessInfo struct {
 	// the size of the set, as a list's rows and the list have them; 0
 	// when not given.
 	PosInSet, SetSize int
+	// RowCount and ColumnCount are how many rows and columns a table or
+	// a grid has (aria-rowcount, aria-colcount), and RowIndex and
+	// ColumnIndex the place of a row or a cell among them, from 1
+	// (aria-rowindex, aria-colindex), as the app gave them; 0 when not
+	// given.
+	RowCount, ColumnCount, RowIndex, ColumnIndex int
+	// RowSpan and ColumnSpan are how many rows and columns a cell covers
+	// (aria-rowspan, aria-colspan), as its RowSpan and ColumnSpan set
+	// them; 0 for one.
+	RowSpan, ColumnSpan int
 	// Min, Max and Now are the range and the value of a slider, progress
 	// bar, meter or stepper (aria-valuemin, -valuemax and -valuenow), Now
 	// below Min for progress of unknown length; Step is how far the keys
@@ -107,9 +126,43 @@ func (t *Tester) AccessByRole(r Role, name string) (AccessInfo, bool) {
 	})
 }
 
+// AccessAll returns what assistive technology sees of every element of
+// the last frame, in the order screen readers read them, as Access gives
+// each: to check what a whole view tells screen readers, as that every
+// control has a name.
+//
+//	for _, a := range tt.AccessAll() {
+//		if a.Role == ui.RoleButton && a.Name == "" {
+//			t.Errorf("a button at %v has no name", a.Bounds)
+//		}
+//	}
+func (t *Tester) AccessAll() []AccessInfo {
+	var all []AccessInfo
+	t.accessEach(func(_ Role, _ *platform.AccessNode, info func() AccessInfo) bool {
+		all = append(all, info())
+		return true
+	})
+	return all
+}
+
 // access describes the last frame as it would for assistive technology,
 // and returns the first node that match takes, given its role.
 func (t *Tester) access(match func(r Role, n *platform.AccessNode) bool) (AccessInfo, bool) {
+	var found AccessInfo
+	ok := false
+	t.accessEach(func(r Role, n *platform.AccessNode, info func() AccessInfo) bool {
+		if match(r, n) {
+			found, ok = info(), true
+		}
+		return !ok
+	})
+	return found, ok
+}
+
+// accessEach describes the last frame as it would for assistive
+// technology, and calls fn with each node in reading order, its role and
+// what info returns of it, until fn returns false.
+func (t *Tester) accessEach(fn func(r Role, n *platform.AccessNode, info func() AccessInfo) bool) {
 	// Reading the window's focus would have its next change rebuild the
 	// frame.
 	defer func(read bool) { t.rt.focusRead = read }(t.rt.focusRead)
@@ -120,7 +173,12 @@ func (t *Tester) access(match func(r Role, n *platform.AccessNode) bool) (Access
 	var walk func(e *node)
 	walk = func(e *node) {
 		if e.role > RoleNone {
-			given[e.id] = e.role
+			// But for a List's rows in a table or a grid, which are seen
+			// as its rows. Roles the node's roles do not follow in order,
+			// as RoleListBox and RoleDeletion, stay as they were given.
+			if r, ok := e.accessRole(); ok && !(e.role == RoleListItem && r == platform.RoleRow) {
+				given[e.id] = e.role
+			}
 		}
 		for ch := e.first; ch != nil; ch = ch.next {
 			walk(ch)
@@ -138,20 +196,27 @@ func (t *Tester) access(match func(r Role, n *platform.AccessNode) bool) (Access
 			// (accessRole).
 			r = Role(n.Role) + RoleGroup
 		}
-		if match(r, n) {
+		info := func() AccessInfo {
 			a := accessInfoOf(r, n, tree.Focus)
-			for _, id := range n.Controls {
-				for j := range tree.Nodes {
-					if tree.Nodes[j].ID == id {
-						a.Controls = append(a.Controls, tree.Nodes[j].Label)
-						break
+			names := func(ids []uint64) []string {
+				var out []string
+				for _, id := range ids {
+					for j := range tree.Nodes {
+						if tree.Nodes[j].ID == id {
+							out = append(out, tree.Nodes[j].Label)
+							break
+						}
 					}
 				}
+				return out
 			}
-			return a, true
+			a.Controls, a.DescribedBy, a.ErrorMessage = names(n.Controls), names(n.DescribedBy), names(n.ErrorMessage)
+			return a
+		}
+		if !fn(r, n, info) {
+			return
 		}
 	}
-	return AccessInfo{}, false
 }
 
 // accessInfoOf returns what n tells of an element of role r, in the tree
@@ -202,6 +267,7 @@ func accessInfoOf(r Role, n *platform.AccessNode, focus uint64) AccessInfo {
 		Sort:            sort,
 		HasPopup:        Popup(n.HasPopup),
 		Vertical:        s&platform.AccessVertical != 0,
+		Horizontal:      s&platform.AccessHorizontal != 0,
 		Segment:         s&platform.AccessSegment != 0,
 		Offscreen:       s&platform.AccessOffscreen != 0,
 		Current:         Current(n.Current),
@@ -210,6 +276,12 @@ func accessInfoOf(r Role, n *platform.AccessNode, focus uint64) AccessInfo {
 		Level:           n.Level,
 		PosInSet:        n.PosInSet,
 		SetSize:         n.SetSize,
+		RowCount:        n.RowCount,
+		ColumnCount:     n.ColCount,
+		RowIndex:        n.RowIndex,
+		ColumnIndex:     n.ColIndex,
+		RowSpan:         n.RowSpan,
+		ColumnSpan:      n.ColSpan,
 		Min:             n.Min,
 		Max:             n.Max,
 		Now:             n.Now,

@@ -267,4 +267,102 @@ export const showcase: ShowcaseApp[] = [
     mode: "native",
     image: "/showcase/teebots.png",
   },
+  {
+    name: "映刻 Screenpin",
+    description:
+      "A Windows screenshot and screen recording utility that stays in the system tray. Global shortcuts capture a region, pin images above other windows, stitch scrolling screenshots, or record a region and trim the result before exporting.",
+    url: "https://github.com/wiptgdxv/screenpin",
+    author: "wiptgdxv",
+    mode: "native",
+    image: "/showcase/screenpin.png",
+  },
+  {
+    name: "Sotto",
+    description:
+      "A lightweight, unobtrusive desktop translator built for Windows users and developers.",
+    url: "https://github.com/doyuli/sotto",
+    author: "doyuli",
+    mode: "web",
+    image: "/showcase/sotto.png",
+  },
+  {
+    name: "TanGit",
+    description:
+      "An open-source Git desktop client built on Lazygit. Stage individual diff lines, browse history and branch graphs, resolve conflicts, and work across repositories on macOS, Windows and Linux with keyboard-driven native UI.",
+    url: "https://github.com/FleetingEcho/TanGit",
+    author: "FleetingEcho",
+    mode: "native",
+    image: "/showcase/tangit.jpg",
+  },
+  {
+    name: "CurlGo",
+    description:
+      "An open-source, local-first API client for macOS and Windows, drawn with MyGo's native UI. Paste a curl command or import Postman v2.1 and Bruno collections, send HTTP, SSE and WebSocket requests, keep environments, global headers and a persistent cookie jar in one local workspace, and check responses with assertions and variable extraction; a CLI and agent skill run the same requests headlessly.",
+    url: "https://github.com/echoVic/curlgo",
+    author: "echoVic",
+    mode: "native",
+    image: "/showcase/curlgo.jpg",
+  },
+  {
+    name: "GoRequest",
+    description:
+      "An open-source, local-first API client and documentation workspace with native UI. Debug HTTP and WebSocket requests, keep YAML requests and Markdown docs together in Git, import from cURL, Postman and OpenAPI, and run automated tests and local mocks.",
+    url: "https://github.com/Flyinsky2004/GoRequest",
+    author: "Flyinsky2004",
+    mode: "native",
+    image: "/showcase/gorequest.jpg",
+  },
+  {
+    name: "Ferry",
+    description:
+      "A per-process proxy router for Windows, built on ProxyBridge, with ordered rules, SOCKS5 and HTTP proxy nodes, and live connections and logs.",
+    url: "https://github.com/ayuayue/ferry",
+    author: "ayuayue",
+    mode: "web",
+  },
+  {
+    name: "MyVNC",
+    description:
+      "A VNC and Microsoft Remote Desktop viewer for Windows and macOS, rebuilt from TigerVNC. Connecting to a Mac uses its built-in Screen Sharing, so the Mac installs nothing, with a high-performance mode streaming HEVC or H.264 at the source frame rate and file transfer both ways.",
+    url: "https://github.com/si-mods/MyVNC",
+    author: "si-mods",
+    mode: "native",
+    image: "/showcase/myvnc.jpg",
+  },
+  {
+    name: "Golder",
+    description:
+      "An open-source AI coding agent in Go for macOS, Windows and Linux, with a native desktop app and a terminal/CLI. The desktop app brings project chats, file and Git review, an integrated terminal and browser together, with configurable approvals and experimental computer use.",
+    url: "https://github.com/getan/golder",
+    author: "getan",
+    mode: "native",
+    image: "/showcase/golder.jpg",
+  },
+  {
+    name: "Vole",
+    description:
+      "A disk cleaner for macOS. A treemap of what fills your disk, safe cache cleanup you review item by item, app uninstalls that take the leftovers too, and live system status in the menu bar. Built on Mole.",
+    url: "https://github.com/hellozhangran/vole",
+    author: "hellozhangran",
+    mode: "native",
+    image: "/showcase/vole.jpg",
+  },
+  {
+    name: "MiguWave",
+    description:
+      "A third-party Migu Music desktop client for macOS and Windows, drawn with MyGo's native UI. Discovery, charts, playlists and artist pages, scrolling lyrics, a full-screen vinyl stage with GPU-drawn effects, and Apple Music-style crossfade between tracks.",
+    url: "https://github.com/horizon0514/MiguWave",
+    author: "horizon0514",
+    mode: "native",
+    image: "/showcase/miguwave.jpg",
+  },
+  {
+    name: "OpenBee",
+    description:
+      "An open-source AI team for macOS, Windows and Linux, with its server built in. Message Bee, the coordinator, and it hands each task to a worker running Claude Code, Codex or pi in its own folder, now, later or on a cron schedule; the same workers also answer in the browser and in chat apps like Telegram, Discord and Lark.",
+    url: "https://github.com/theopenbee/openbee",
+    author: "theopenbee",
+    mode: "native",
+    image: "/showcase/openbee.jpg",
+  },
 ]

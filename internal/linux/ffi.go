@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -116,6 +117,7 @@ var (
 	gFilenameFromURI               func(uri string, hostname, gerr ptr) ptr
 	gErrorNewLiteral               func(domain uint32, code int32, msg *byte) ptr
 	gQuarkFromString               func(s *byte) uint32
+	gSetPrgname                    func(name *byte)
 	gIdleAddFull                   func(priority int32, fn ptr, data ptr, notify ptr) uint32
 	gTimeoutAdd                    func(ms uint32, fn ptr, data ptr) uint32
 	gMainContextIteration          func(ctx ptr, mayBlock bool) bool
@@ -139,6 +141,7 @@ var (
 	gAppInfoLaunchDefaultForURI    func(uri *byte, ctx ptr, err *ptr) bool
 	gAppInfoGetDefaultForURIScheme func(scheme *byte) ptr
 	gAppInfoGetID                  func(info ptr) ptr
+	gAppInfoGetDefaultForType      func(contentType *byte, mustSupportURIs bool) ptr
 	gFileNewForPath                func(path *byte) ptr
 	gFileGetURI                    func(file ptr) ptr
 	gFileTrash                     func(file ptr, cancellable ptr, err *ptr) bool
@@ -569,6 +572,7 @@ func load() error {
 	mustBind(g, &gFilenameFromURI, "g_filename_from_uri")
 	mustBind(g, &gErrorNewLiteral, "g_error_new_literal")
 	mustBind(g, &gQuarkFromString, "g_quark_from_string")
+	mustBind(g, &gSetPrgname, "g_set_prgname")
 	mustBind(g, &gIdleAddFull, "g_idle_add_full")
 	mustBind(g, &gTimeoutAdd, "g_timeout_add")
 	mustBind(g, &gMainContextIteration, "g_main_context_iteration")
@@ -620,6 +624,7 @@ func load() error {
 	mustBind(i, &gAppInfoLaunchDefaultForURI, "g_app_info_launch_default_for_uri")
 	mustBind(i, &gAppInfoGetDefaultForURIScheme, "g_app_info_get_default_for_uri_scheme")
 	mustBind(i, &gAppInfoGetID, "g_app_info_get_id")
+	mustBind(i, &gAppInfoGetDefaultForType, "g_app_info_get_default_for_type")
 	mustBind(i, &gFileNewForPath, "g_file_new_for_path")
 	mustBind(i, &gFileGetURI, "g_file_get_uri")
 	mustBind(i, &gFileTrash, "g_file_trash")
@@ -865,6 +870,9 @@ func load() error {
 var (
 	webKitOnce sync.Once
 	errWebKit  error
+	// webKitLoaded reports, from any thread, that webKit loaded the
+	// libraries and bound their functions.
+	webKitLoaded atomic.Bool
 )
 
 // webKit loads WebKitGTK, JavaScriptCore and libsoup, the first time a
@@ -872,9 +880,18 @@ var (
 // did not load. Windows that show Content need GTK alone: an app whose
 // windows all do never loads them, which saves it some 75 libraries, 7 MB
 // and 20 ms of startup.
+//
+// Loading only opens the libraries and binds functions, which any thread
+// may do (WebViewAvailable). WebKitGTK takes the first thread that calls
+// into it for its UI thread, and aborts when another calls later: the
+// first call, persistCookies, waits for the main thread, whose users of
+// WebKit all call webKit first.
 func webKit() error {
-	webKitOnce.Do(func() { errWebKit = loadWebKit() })
-	if errWebKit == nil && theBackend != nil {
+	webKitOnce.Do(func() {
+		errWebKit = loadWebKit()
+		webKitLoaded.Store(errWebKit == nil)
+	})
+	if errWebKit == nil && theBackend != nil && theBackend.IsMainThread() {
 		cookiesOnce.Do(persistCookies)
 	}
 	return errWebKit
