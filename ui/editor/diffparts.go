@@ -191,6 +191,27 @@ func (d *DiffState) buildSeparators(c *ui.Context, ct *Theme) {
 	})
 }
 
+// buildFindBars builds the find bars of the sides open, after the
+// separators, which would cover them: each in a layer over its side.
+func (d *DiffState) buildFindBars(c *ui.Context) {
+	for i := range d.eds {
+		ed := &d.eds[i]
+		if !ed.find.open || d.Layout == DiffUnified && i == 0 {
+			continue
+		}
+		layer := ui.Box(c).Key(fmt.Sprint("find layer ", i)).Absolute().Top(0).Bottom(0).PassThrough()
+		switch w := d.split.widths(d.split.width); {
+		case d.Layout == DiffUnified || d.split.width <= 0:
+			layer.Left(0).Right(0)
+		case i == 0:
+			layer.Left(0).Width(w[0])
+		default:
+			layer.Right(0).Width(w[1])
+		}
+		layer.Children(func() { ed.buildFindBar(c) })
+	}
+}
+
 // DiffHunkActions are the actions on a change of a diff, as
 // RenderHunkActions builds them: reverting it, or keeping it.
 type DiffHunkActions struct {

@@ -40,6 +40,7 @@ type options struct {
 	activeLine    bool
 	cursorShape   CursorShape
 	fitContent    bool
+	pinnedTop     float32
 	placeholder   string
 	label         string
 	theme         *Theme

@@ -38,6 +38,9 @@ type finder struct {
 	lower    string // the text lowered, for searching without case
 	lowerVer uint64
 	scrollTo bool
+	// reveal brings the match chosen into view, in the container around an
+	// editor as high as its lines (FitContent), which scrolls for it.
+	reveal bool
 }
 
 // maxMatches bounds the matches a search finds.
@@ -85,6 +88,7 @@ func (f *finder) update(ed *editor) {
 	// In the middle of the view when out of it, either way, and out of a
 	// fold.
 	ed.setSels([]sel{ed.newSel(m.start, m.end)}, revealCenter)
+	f.reveal = true
 	if ed.o.sharedScroll == nil {
 		ed.doReveal()
 	}
@@ -300,6 +304,7 @@ func (f *finder) step(ed *editor, dir int) bool {
 	f.current = i
 	m := f.matches[i]
 	ed.setSels([]sel{ed.newSel(m.start, m.end)}, revealCenter)
+	f.reveal = true
 	return true
 }
 

@@ -59,6 +59,11 @@ type DiffState struct {
 	// FitContent makes the viewer as high as its lines, as a file of a
 	// list of them, rather than scrolling them itself.
 	FitContent bool
+	// PinnedTop is State's: how high what stays at the top of the scroll
+	// container around a viewer as high as its lines is, as the header of
+	// its file pinned there, which the find bar and the match found show
+	// below.
+	PinnedTop float32
 	// KeepScrollbars and NoScrollbars are those of State: the scroll
 	// bars stay with the pointer away, or are taken away with their room.
 	KeepScrollbars bool
@@ -568,7 +573,7 @@ func (d *DiffState) sideOptions(old bool) options {
 	o := options{
 		readOnly: old || !d.Editable, font: d.Font, lineHeight: d.LineHeight, tabSize: d.TabSize,
 		wrap: d.Wrap, lineNumbers: LineNumbersOn, whitespace: WhitespaceNone, autoClose: true,
-		theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: digits,
+		theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, pinnedTop: d.PinnedTop, minDigits: digits,
 		keepScrollbars: d.KeepScrollbars, hideScrollbars: d.NoScrollbars,
 		renderFindBar: d.RenderFindBar, renderGoToLine: d.RenderGoToLine,
 	}
@@ -627,6 +632,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 				ed.FillWidth()
 			}
 			d.buildSeparators(c, ct)
+			d.buildFindBars(c)
 		})
 		if d.FitContent {
 			d.fit()
@@ -705,6 +711,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 			sides[i].Grow(d.split.grow[i])
 		}
 		d.buildSeparators(c, ct)
+		d.buildFindBars(c)
 	})
 	if d.FitContent {
 		d.fit()
@@ -899,6 +906,29 @@ func (d *DiffState) expand(a int, dir int, all bool) {
 		d.expandV++
 		return
 	}
+}
+
+// expandAt expands the unchanged lines collapsed around line of a side,
+// the old one or the new, as many as a click on a separator does, and
+// reports whether it was collapsed: the match found there shows.
+func (d *DiffState) expandAt(old bool, line int) bool {
+	for _, g := range d.gapList {
+		start := g.hideB
+		if old {
+			start = g.hideA
+		}
+		if g.hidden <= 0 || line < start || line >= start+g.hidden {
+			continue
+		}
+		at := g.hideA + line - start // in the old text, as revealed counts
+		n := d.expansionLines()
+		from := max(g.hideA, at-n/2)
+		to := min(g.hideA+g.hidden-1, from+n-1)
+		d.revealed = mergeSpans(append(d.revealed, lineSpan{from, to}))
+		d.expandV++
+		return true
+	}
+	return false
 }
 
 // collapse hides again the lines expanded of the gap starting at old

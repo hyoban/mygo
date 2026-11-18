@@ -158,7 +158,8 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 		if ds, ok := ed.o.decor.(*diffSide); ok {
 			ds.buildBlocks(c, ed)
 		}
-		if ed.find.open {
+		if _, diff := ed.o.decor.(*diffSide); ed.find.open && !diff {
+			// A diff builds its sides' over its separators (buildFindBars).
 			ed.buildFindBar(c)
 		}
 		if ed.goTo.open {

@@ -59,6 +59,11 @@ type State struct {
 	// FitContent makes the editor as high as its lines, to show in a
 	// scroll view or a list, rather than scrolling them itself.
 	FitContent bool
+	// PinnedTop is how high what stays at the top of the scroll container
+	// around an editor as high as its lines (FitContent) is, as a list's
+	// section header pinned there: the find bar stays below it as the
+	// container scrolls, and the match found shows below it.
+	PinnedTop float32
 	// KeepScrollbars keeps the thumbs of the scroll bars, and the marks
 	// of the carets on the vertical one, showing while the text has
 	// anywhere to scroll, rather than only while the pointer is over the
@@ -237,7 +242,7 @@ func (st *State) options() options {
 		wrap: st.SoftWrap, wrapColumn: st.WrapColumn, lineNumbers: st.LineNumbers, whitespace: st.Whitespace,
 		wrapGuides: st.WrapGuides, indentGuides: !st.NoIndentGuides, scrollPastEnd: !st.NoScrollPastEnd && !st.FitContent,
 		keepScrollbars: st.KeepScrollbars, hideScrollbars: st.NoScrollbars, scrollbar: st.Scrollbar,
-		autoClose: !st.NoAutoClose, folding: !st.NoFolding, activeLine: !st.NoActiveLine, cursorShape: st.CursorShape, fitContent: st.FitContent,
+		autoClose: !st.NoAutoClose, folding: !st.NoFolding, activeLine: !st.NoActiveLine, cursorShape: st.CursorShape, fitContent: st.FitContent, pinnedTop: st.PinnedTop,
 		placeholder: st.Placeholder, label: st.Label, theme: st.Theme, bindings: st.Bindings, gutterMarks: st.GutterMarks,
 		backgrounds: st.LineBackgrounds, textBgs: st.TextBackgrounds, diffBase: st.DiffBase, onCompletion: st.OnCompletion, onHover: st.OnHover, onDefinition: st.OnDefinition,
 		hoverDelay: st.HoverDelay, noPointerHover: st.NoPointerHover,

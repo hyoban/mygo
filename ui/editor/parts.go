@@ -186,8 +186,16 @@ func (ed *editor) buildFindBar(c *ui.Context) {
 	f := &ed.find
 	f.update(ed)
 	t := c.Theme()
-	bar := ui.Box(c).Key("code find").Absolute().Top(t.Space(1)).Right(t.Space(4)).
-		Role(ui.RoleToolbar).Label(l10n.In(c.Locale()).Find()).Cursor(ui.CursorDefault).HandleInput(shield)
+	bar := ui.Box(c).Key("code find")
+	if ed.o.fitContent {
+		// As high as its lines, the editor scrolls in its container: the
+		// bar stays at the top of what shows of it, below what is pinned
+		// there, until the editor goes.
+		bar.Sticky().Top(ed.o.pinnedTop+t.Space(1)).AlignSelf(ui.End).Margin(t.Space(1), t.Space(4), 0, 0)
+	} else {
+		bar.Absolute().Top(t.Space(1)).Right(t.Space(4))
+	}
+	bar.Role(ui.RoleToolbar).Label(l10n.In(c.Locale()).Find()).Cursor(ui.CursorDefault).HandleInput(shield)
 	render := ed.o.renderFindBar
 	if render == nil {
 		render = DefaultFindBar
@@ -210,6 +218,59 @@ func (ed *editor) buildFindBar(c *ui.Context) {
 			f.step(ed, -1)
 		}
 	}
+	if f.reveal {
+		if ed.expandMatch() {
+			// It shows once the diff lays out its lines again.
+			c.Invalidate()
+		} else {
+			f.reveal = false
+			ed.showMatch(c)
+		}
+	}
+}
+
+// expandMatch expands the unchanged lines a diff collapsed around the
+// match chosen, and reports whether they were collapsed.
+func (ed *editor) expandMatch() bool {
+	f := &ed.find
+	ds, ok := ed.o.decor.(*diffSide)
+	if !ok || len(f.matches) == 0 {
+		return false
+	}
+	line := ed.view.text.LineOf(f.matches[f.current].start)
+	if !ds.d.expandAt(ds.old, line) {
+		return false
+	}
+	ed.reveal = max(ed.reveal, revealCenter)
+	return true
+}
+
+// showMatch scrolls the container around an editor as high as its lines
+// (FitContent), which the editor cannot scroll itself, to the match
+// chosen: to the middle of what shows where it is out of it, or under
+// what is pinned at its top, as the editor scrolls to it (revealCenter).
+func (ed *editor) showMatch(c *ui.Context) {
+	f := &ed.find
+	if !ed.o.fitContent || len(f.matches) == 0 {
+		return
+	}
+	cr, ok := ed.caretRect(f.matches[f.current].start)
+	if !ok {
+		return
+	}
+	top, bottom := float64(cr.Y), float64(cr.Y+cr.H)
+	if ed.paintedBuild > 0 {
+		shown := ed.shownY
+		if shown[0] > 0 {
+			// The editor runs above the top: what is pinned there covers it.
+			shown[0] += float64(ed.o.pinnedTop)
+		}
+		if top >= shown[0] && bottom <= shown[1] {
+			return
+		}
+	}
+	ui.Box(c).Key("code find match").Absolute().Left(ed.textX+cr.X).Top(cr.Y).Size(1, cr.H).PassThrough().
+		ScrollIntoView(ui.ScrollIntoViewOptions{Block: ui.ScrollCenter})
 }
 
 // GoToLineBar is an editor's go to line bar, as RenderGoToLine builds it:
